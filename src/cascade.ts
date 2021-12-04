@@ -9,8 +9,14 @@ type ListenerHandle = { close(): void };
 
 export type Compute<S, T = undefined> = (
   value: T,
+  /**
+   * Add a dependency on external state
+   */
   addDependency: (...dependencies: Cascade[]) => void,
-  abort: () => void
+  /**
+   * Wait until the next invalidate to re-compute
+   */
+  defer: () => void
 ) => Whenever<S>;
 
 export class Cascade<T = any> {
@@ -188,5 +194,14 @@ export class Cascade<T = any> {
    */
   static const<T>(value: T) {
     return new Cascade(() => value);
+  }
+
+  /**
+   * Creates a Cascade that throws an error
+   */
+  static error(error: any) {
+    return new Cascade(() => {
+      throw error;
+    });
   }
 }

@@ -26,7 +26,6 @@ export class Cascade<T = any> {
 
   private isValid = false;
   private listen(listener: Listener): ListenerHandle {
-    if (this.isValid) listener();
     this.listeners.push(listener);
     return {
       close: () => {
@@ -54,31 +53,21 @@ export class Cascade<T = any> {
   async invalidate() {
     this.isValid = false;
 
-    let dependencies: Cascade[] = [];
-    const deps = (...deps: Cascade[]) => dependencies.push(...deps);
+    let deps: Cascade[] = [];
+    const addDeps = (...deps_: Cascade[]) => deps.push(...deps_);
 
     const abort = () => {
       throw ABORT;
     };
 
     try {
-      this.curValue = await this.compute(undefined, deps, abort);
+      this.curValue = await this.compute(undefined, addDeps, abort);
       this.curError = null;
     } catch (e) {
-      if (e === ABORT) return;
-
+      if (e === ABORT) return this.setDeps(deps);
       this.curValue = undefined;
       this.curError = e;
     }
-
-    // Subscribe to new dependencies before unsubscribing from old ones
-    // to prevent dependencies from closing while waiting to re-subscribe
-    const handles = [...new Set(dependencies)].map((dep) =>
-      dep.listen(() => this.invalidate())
-    );
-
-    this.handles.forEach((handle) => handle.close());
-    this.handles = handles;
 
     this.isValid = true;
 
@@ -91,6 +80,17 @@ export class Cascade<T = any> {
 
     this.prevValue = this.curValue;
     this.prevError = this.curError;
+
+    this.setDeps(deps);
+  }
+
+  private setDeps(deps: Cascade<any>[]) {
+    const handles = [...new Set(deps)].map((dep) =>
+      dep.listen(() => this.invalidate())
+    );
+
+    this.handles.forEach((handle) => handle.close());
+    this.handles = handles;
   }
 
   /**

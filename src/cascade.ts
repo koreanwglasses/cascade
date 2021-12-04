@@ -155,6 +155,22 @@ export class Cascade<T = any> {
     return this.join(compute);
   }
 
+  next(): Promise<T> {
+    if (this.isValid) {
+      if (this.curError) return Promise.reject(this.curError);
+      return Promise.resolve(this.curValue!);
+    }
+
+    return new Promise((res, rej) => {
+      const handle = this.listen(() => {
+        if (this.curError) rej(this.curError);
+        else res(this.curValue!);
+
+        handle.close();
+      });
+    });
+  }
+
   /**
    * Works similarly to Promise.all
    */

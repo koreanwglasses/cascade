@@ -1,6 +1,11 @@
 import deepEqual from "deep-equal";
 
-const DEFER = "ABORT_WITHIN_CASCADE_CALLBACK";
+/**
+ * throw this to abort computation without
+ * passing a value or error to listeners and
+ * wait until the next update from a dependency
+ */
+export const DEFER_RESULT = "CASCADE_DEFER_RESULT";
 
 type Whenever<T> = T | Promise<T>;
 
@@ -44,7 +49,7 @@ export abstract class Volatile<T = any> {
         ? !deepEqual(this.curError, this.prevError)
         : !deepEqual(this.curValue, this.prevValue))
     ) {
-      this.listeners.forEach((listener) => listener());
+      [...this.listeners].forEach((listener) => listener());
     }
 
     this.prevValue = this.curValue;
@@ -62,12 +67,12 @@ export abstract class Volatile<T = any> {
    */
   pipe<S>(compute: Compute<S, T>) {
     const provider = this;
-    return new Cascade((_, deps, defer) => {
+    return new Cascade((_, deps) => {
       deps(provider);
 
-      if (!provider.isValid) throw defer();
+      if (!provider.isValid) throw DEFER_RESULT;
       if (provider.curError) throw provider.curError;
-      return compute(provider.curValue!, deps, defer);
+      return compute(provider.curValue!, deps);
     });
   }
 
@@ -80,10 +85,10 @@ export abstract class Volatile<T = any> {
    */
   catch<S>(handler: (error: any) => Whenever<S>) {
     const provider = this;
-    return new Cascade((_, deps, abort) => {
+    return new Cascade((_, deps) => {
       deps(provider);
 
-      if (!provider.isValid) throw abort();
+      if (!provider.isValid) throw DEFER_RESULT;
       if (provider.curError) return handler(provider.curError);
       return provider.curValue!;
     });
@@ -94,12 +99,8 @@ export abstract class Volatile<T = any> {
    */
   join<S>(compute: Compute<Cascade<S>, T>) {
     return this.pipe(
-      async (value, deps, abort) =>
-        await ((await compute(value, deps, abort)) as any).compute(
-          undefined,
-          deps,
-          abort
-        )
+      async (value, deps) =>
+        await ((await compute(value, deps)) as any).compute(undefined, deps)
     );
   }
 
@@ -139,11 +140,7 @@ export type Compute<S, T = undefined> = (
   /**
    * Add a dependency on external state
    */
-  addDependency: (...dependencies: Volatile[]) => void,
-  /**
-   * Wait until the next invalidate to re-compute
-   */
-  defer: () => void
+  addDependency: (...dependencies: Volatile[]) => void
 ) => Whenever<S>;
 
 export class Cascade<T = any> extends Volatile<T> {
@@ -152,25 +149,20 @@ export class Cascade<T = any> extends Volatile<T> {
    */
   private handles: ListenerHandle[] = [];
 
+  /**
+   * @param forceNotify Set this to true to notify listeners even if the
+   * resulting value hasn't changed
+   */
   async invalidate(forceNotify = false) {
     super.invalidate();
 
     let deps: Volatile[] = [];
     const addDeps = (...deps_: Volatile[]) => deps.push(...deps_);
 
-    const defer = () => {
-      throw DEFER;
-    };
-
     try {
-      this.report(
-        null,
-        await this.compute(undefined, addDeps, defer),
-        forceNotify
-      );
+      this.report(null, await this.compute(undefined, addDeps), forceNotify);
     } catch (e) {
-      if (e === DEFER) return this.setDeps(deps);
-      this.report(e, undefined, forceNotify);
+      if (e !== DEFER_RESULT) this.report(e, undefined, forceNotify);
     }
 
     this.setDeps(deps);
@@ -186,7 +178,7 @@ export class Cascade<T = any> extends Volatile<T> {
   }
 
   protected close() {
-    this.handles.forEach((sub) => sub.close());
+    this.handles.forEach((handle) => handle.close());
   }
 
   /**
@@ -201,19 +193,19 @@ export class Cascade<T = any> extends Volatile<T> {
    */
   constructor(private compute: Compute<T>) {
     super();
-    this.invalidate()
+    this.invalidate();
   }
 
   /**
    * Works similarly to Promise.all
    */
   static all<T extends unknown[]>(providers: {
-    [K in keyof T]: Cascade<T[K]>;
+    [K in keyof T]: Volatile<T[K]>;
   }) {
-    return providers.reduce<Cascade<unknown[]>>(
+    return providers.reduce<Cascade<any[]>>(
       (a, b) => a.join((arr) => b.pipe((val) => [...arr, val])),
       Cascade.const([])
-    ) as unknown as Cascade<T>;
+    ) as Cascade<T>;
   }
 
   /**

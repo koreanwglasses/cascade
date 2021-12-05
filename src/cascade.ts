@@ -53,10 +53,6 @@ export abstract class Volatile<T = any> {
 
   protected close() {}
 
-  constructor() {
-    this.invalidate();
-  }
-
   invalidate() {
     this.isValid = false;
   }
@@ -174,7 +170,7 @@ export class Cascade<T = any> extends Volatile<T> {
       );
     } catch (e) {
       if (e === DEFER) return this.setDeps(deps);
-      this.report(e);
+      this.report(e, undefined, forceNotify);
     }
 
     this.setDeps(deps);
@@ -205,6 +201,7 @@ export class Cascade<T = any> extends Volatile<T> {
    */
   constructor(private compute: Compute<T>) {
     super();
+    this.invalidate()
   }
 
   /**

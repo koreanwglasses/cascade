@@ -97,15 +97,16 @@ export abstract class Volatile<T = any> {
   /**
    * Chains a computation that returns a Cascade and outputs the nested type
    */
-  join<S>(compute: Compute<Cascade<S>, T>) {
-    return this.pipe(
-      async (value, deps) =>
-        await ((await compute(value, deps)) as any).compute(undefined, deps)
-    );
+  join<S>(compute: Compute<Cascade<S>, T>): Cascade<S> {
+    return Cascade.join(this, compute);
   }
 
-  j<S>(compute: Compute<Cascade<S>, T>): Cascade<S> {
+  j<S>(compute: Compute<Cascade<S>, T>) {
     return this.join(compute);
+  }
+
+  flat<T>(): Cascade<T> {
+    return Cascade.flatten<any>(this);
   }
 
   next(): Promise<T> {
@@ -223,4 +224,20 @@ export class Cascade<T = any> extends Volatile<T> {
       throw error;
     });
   }
+
+  static join<S, T>(provider: Volatile<T>, consumer: Compute<Cascade<S>, T>) {
+    return provider.pipe(
+      async (value, deps) =>
+        await (await consumer(value, deps)).compute(undefined, deps)
+    );
+  }
+
+  static flatten<T>(nestedCascade: Nested<T>): Cascade<T> {
+    if (nestedCascade instanceof Volatile) {
+      return Cascade.join(nestedCascade, (result) => Cascade.flatten(result));
+    }
+    return new Cascade(() => nestedCascade);
+  }
 }
+
+type Nested<T> = T | Volatile<Nested<T>>;

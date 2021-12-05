@@ -1,13 +1,13 @@
 import deepEqual from "deep-equal";
 
-const ABORT = "ABORT_WITHIN_CASCADE_CALLBACK";
+const DEFER = "ABORT_WITHIN_CASCADE_CALLBACK";
 
 type Whenever<T> = T | Promise<T>;
 
 type Listener = () => void;
 type ListenerHandle = { close(): void };
 
-export class Volatile<T = any> {
+export abstract class Volatile<T = any> {
   /**
    * Listeners from Cascade that are dependent on this
    */
@@ -25,15 +25,33 @@ export class Volatile<T = any> {
     };
   }
 
-  protected notify() {
-    this.listeners.forEach((listener) => listener());
+  private isValid = false;
+  private curValue?: T;
+  private curError?: any;
+
+  private prevValue?: T;
+  private prevError?: any;
+
+  protected report(error: any, value?: T, forceNotify = false) {
+    this.curError = error;
+    this.curValue = value;
+    this.isValid = true;
+
+    // Notify dependents of changes
+    if (
+      forceNotify ||
+      (this.curError
+        ? !deepEqual(this.curError, this.prevError)
+        : !deepEqual(this.curValue, this.prevValue))
+    ) {
+      this.listeners.forEach((listener) => listener());
+    }
+
+    this.prevValue = this.curValue;
+    this.prevError = this.curError;
   }
 
   protected close() {}
-
-  protected isValid = false;
-  protected curValue?: T;
-  protected curError?: any;
 
   constructor() {
     this.invalidate();
@@ -111,18 +129,12 @@ export class Volatile<T = any> {
 }
 
 export class Managed<T = any> extends Volatile<T> {
-  value(value: T) {
-    this.curValue = value;
-    this.curError = null;
-    this.isValid = true;
-    this.notify();
+  value(value: T, forceNotify = false) {
+    this.report(null, value, forceNotify);
   }
 
-  error(error: any) {
-    this.curValue = undefined;
-    this.curError = error;
-    this.isValid = true;
-    this.notify();
+  error(error: any, forceNotify = false) {
+    this.report(error, undefined, forceNotify);
   }
 }
 
@@ -144,38 +156,26 @@ export class Cascade<T = any> extends Volatile<T> {
    */
   private handles: ListenerHandle[] = [];
 
-  private prevValue?: T;
-  private prevError?: any;
-  async invalidate() {
-    this.isValid = false;
+  async invalidate(forceNotify = false) {
+    super.invalidate();
 
     let deps: Volatile[] = [];
     const addDeps = (...deps_: Volatile[]) => deps.push(...deps_);
 
-    const abort = () => {
-      throw ABORT;
+    const defer = () => {
+      throw DEFER;
     };
 
     try {
-      this.curValue = await this.compute(undefined, addDeps, abort);
-      this.curError = null;
+      this.report(
+        null,
+        await this.compute(undefined, addDeps, defer),
+        forceNotify
+      );
     } catch (e) {
-      if (e === ABORT) return this.setDeps(deps);
-      this.curValue = undefined;
-      this.curError = e;
+      if (e === DEFER) return this.setDeps(deps);
+      this.report(e);
     }
-
-    this.isValid = true;
-
-    // Notify dependents of changes
-    if (this.curError && !deepEqual(this.curError, this.prevError)) {
-      this.notify();
-    } else if (!deepEqual(this.curValue, this.prevValue)) {
-      this.notify();
-    }
-
-    this.prevValue = this.curValue;
-    this.prevError = this.curError;
 
     this.setDeps(deps);
   }

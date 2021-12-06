@@ -56,9 +56,13 @@ export abstract class Volatile<T = any> {
     this.prevError = this.curError;
   }
 
-  protected close() {}
+  close() {}
 
-  invalidate() {
+  /**
+   * @param forceNotify Set this to true to notify listeners even if the
+   * resulting value hasn't changed
+   */
+  invalidate(forceNotify?: boolean) {
     this.isValid = false;
   }
 
@@ -150,25 +154,6 @@ export class Cascade<T = any> extends Volatile<T> {
    */
   private handles: ListenerHandle[] = [];
 
-  /**
-   * @param forceNotify Set this to true to notify listeners even if the
-   * resulting value hasn't changed
-   */
-  async invalidate(forceNotify = false) {
-    super.invalidate();
-
-    let deps: Volatile[] = [];
-    const addDeps = (...deps_: Volatile[]) => deps.push(...deps_);
-
-    try {
-      this.report(null, await this.compute(undefined, addDeps), forceNotify);
-    } catch (e) {
-      if (e !== DEFER_RESULT) this.report(e, undefined, forceNotify);
-    }
-
-    this.setDeps(deps);
-  }
-
   private setDeps(deps: Volatile[]) {
     const handles = [...new Set(deps)].map((dep) =>
       (dep as Cascade).listen(() => this.invalidate())
@@ -191,6 +176,21 @@ export class Cascade<T = any> extends Volatile<T> {
   constructor(private compute: Compute<T>) {
     super();
     this.invalidate();
+  }
+
+  async invalidate(forceNotify = false) {
+    super.invalidate();
+
+    let deps: Volatile[] = [];
+    const addDeps = (...deps_: Volatile[]) => deps.push(...deps_);
+
+    try {
+      this.report(null, await this.compute(undefined, addDeps), forceNotify);
+    } catch (e) {
+      if (e !== DEFER_RESULT) this.report(e, undefined, forceNotify);
+    }
+
+    this.setDeps(deps);
   }
 
   close() {

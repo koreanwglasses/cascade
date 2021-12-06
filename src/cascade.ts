@@ -45,6 +45,7 @@ export abstract class Volatile<T = any> {
     // Notify dependents of changes
     if (
       forceNotify ||
+      (!("prevError" in this) && !("prevValue" in this)) ||
       (this.curError
         ? !deepIs(this.curError, this.prevError)
         : !deepIs(this.curValue, this.prevValue))
@@ -227,6 +228,10 @@ export class Cascade<T = any> extends Volatile<T> {
    */
   static const<T>(value: T) {
     return new Cascade(() => value);
+  }
+
+  static trigger() {
+    return Cascade.const(null);
   }
 
   /**

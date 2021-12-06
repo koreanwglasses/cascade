@@ -178,10 +178,6 @@ export class Cascade<T = any> extends Volatile<T> {
     this.handles = handles;
   }
 
-  protected close() {
-    this.handles.forEach((handle) => handle.close());
-  }
-
   /**
    * The compute expression is evaluated when:
    * 1) `this.invalidate()` is called, or
@@ -195,6 +191,10 @@ export class Cascade<T = any> extends Volatile<T> {
   constructor(private compute: Compute<T>) {
     super();
     this.invalidate();
+  }
+
+  close() {
+    this.handles.forEach((handle) => handle.close());
   }
 
   /**

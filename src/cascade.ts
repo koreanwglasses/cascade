@@ -231,7 +231,7 @@ export class Cascade<T = any> extends Volatile<T> {
   }
 
   static trigger() {
-    return Cascade.const(null);
+    return new Cascade(() => {}, true);
   }
 
   /**

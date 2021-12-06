@@ -101,15 +101,26 @@ export abstract class Volatile<T = any> {
 
   /**
    * Chains a computation that returns a Cascade that outputs the nested type
+   * 
+   * Calling invalidate will re-run the given compute function
    */
   join<S>(compute: Compute<Volatile<S>, T>): Cascade<S> {
-    return this.pipe(compute).pipe((vol, deps) => {
+    const a = this.pipe(compute);
+    const b = a.pipe((vol, deps) => {
       deps(vol);
 
       if (!vol.isValid) throw DEFER_RESULT;
       if (vol.curError) throw vol.curError;
       return vol.curValue as S;
-    }, true);
+    });
+
+    return new Proxy(b, {
+      get(target, p, receiver) {
+        if (p === "invalidate")
+          return (forceNotify?: boolean) => a.invalidate(forceNotify);
+        else return Reflect.get(target, p, receiver);
+      },
+    });
   }
 
   j<S>(compute: Compute<Volatile<S>, T>): Cascade<S> {

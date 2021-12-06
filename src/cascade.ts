@@ -1,4 +1,4 @@
-import deepEqual from "deep-equal";
+import deepIs from "deep-is";
 
 /**
  * throw this to abort computation without
@@ -46,8 +46,8 @@ export abstract class Volatile<T = any> {
     if (
       forceNotify ||
       (this.curError
-        ? !deepEqual(this.curError, this.prevError)
-        : !deepEqual(this.curValue, this.prevValue))
+        ? !deepIs(this.curError, this.prevError)
+        : !deepIs(this.curValue, this.prevValue))
     ) {
       [...this.listeners].forEach((listener) => listener());
     }
@@ -69,7 +69,7 @@ export abstract class Volatile<T = any> {
   /**
    * Chain the output of this Cascade into another computation
    */
-  pipe<S>(compute: Compute<S, T>) {
+  pipe<S>(compute: Compute<S, T>, alwaysNotify?: boolean) {
     const provider = this;
     return new Cascade((_, deps) => {
       deps(provider);
@@ -77,11 +77,11 @@ export abstract class Volatile<T = any> {
       if (!provider.isValid) throw DEFER_RESULT;
       if (provider.curError) throw provider.curError;
       return compute(provider.curValue!, deps);
-    });
+    }, alwaysNotify);
   }
 
-  p<S>(compute: Compute<S, T>) {
-    return this.pipe(compute);
+  p<S>(compute: Compute<S, T>, alwaysNotify?: boolean) {
+    return this.pipe(compute, alwaysNotify);
   }
 
   /**
@@ -94,18 +94,24 @@ export abstract class Volatile<T = any> {
 
       if (!provider.isValid) throw DEFER_RESULT;
       if (provider.curError) return handler(provider.curError);
-      return provider.curValue!;
+      return provider.curValue as T;
     });
   }
 
   /**
-   * Chains a computation that returns a Cascade and outputs the nested type
+   * Chains a computation that returns a Cascade that outputs the nested type
    */
-  join<S>(compute: Compute<Cascade<S>, T>): Cascade<S> {
-    return Cascade.join(this, compute);
+  join<S>(compute: Compute<Volatile<S>, T>): Cascade<S> {
+    return this.pipe(compute).pipe((vol, deps) => {
+      deps(vol);
+
+      if (!vol.isValid) throw DEFER_RESULT;
+      if (vol.curError) throw vol.curError;
+      return vol.curValue as S;
+    }, true);
   }
 
-  j<S>(compute: Compute<Cascade<S>, T>) {
+  j<S>(compute: Compute<Volatile<S>, T>): Cascade<S> {
     return this.join(compute);
   }
 
@@ -172,8 +178,10 @@ export class Cascade<T = any> extends Volatile<T> {
    * using deepEqual), then dependent `Cascade`s are invalidated
    *
    * @param compute The expression to be evaluated
+   * @param alwaysNotify Set this to true to notify listeners on every
+   * invalidate even if the compute value doesn't change
    */
-  constructor(private compute: Compute<T>) {
+  constructor(private compute: Compute<T>, private alwaysNotify = false) {
     super();
     this.invalidate();
   }
@@ -185,9 +193,14 @@ export class Cascade<T = any> extends Volatile<T> {
     const addDeps = (...deps_: Volatile[]) => deps.push(...deps_);
 
     try {
-      this.report(null, await this.compute(undefined, addDeps), forceNotify);
+      this.report(
+        null,
+        await this.compute(undefined, addDeps),
+        forceNotify || this.alwaysNotify
+      );
     } catch (e) {
-      if (e !== DEFER_RESULT) this.report(e, undefined, forceNotify);
+      if (e !== DEFER_RESULT)
+        this.report(e, undefined, forceNotify || this.alwaysNotify);
     }
 
     this.setDeps(deps);
@@ -225,16 +238,9 @@ export class Cascade<T = any> extends Volatile<T> {
     });
   }
 
-  static join<S, T>(provider: Volatile<T>, consumer: Compute<Cascade<S>, T>) {
-    return provider.pipe(
-      async (value, deps) =>
-        await (await consumer(value, deps)).compute(undefined, deps)
-    );
-  }
-
   static flatten<T>(nestedCascade: Nested<T>): Cascade<T> {
     if (nestedCascade instanceof Volatile) {
-      return Cascade.join(nestedCascade, (result) => Cascade.flatten(result));
+      return nestedCascade.join((result) => Cascade.flatten(result));
     }
     return new Cascade(() => nestedCascade);
   }

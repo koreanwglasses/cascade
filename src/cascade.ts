@@ -57,7 +57,14 @@ export abstract class Volatile<T = any> {
     this.prevError = this.curError;
   }
 
-  close() {}
+  private closeCbs: (() => void)[]= []
+  onClose(cb: () => void) {
+    this.closeCbs.push(cb);
+  }
+
+  close() {
+    this.closeCbs.forEach(cb => cb())
+  }
 
   /**
    * @param forceNotify Set this to true to notify listeners even if the
@@ -220,6 +227,7 @@ export class Cascade<T = any> extends Volatile<T> {
 
   close() {
     this.handles.forEach((handle) => handle.close());
+    super.close()
   }
 
   /**

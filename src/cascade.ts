@@ -247,10 +247,10 @@ export class Cascade<T = any> extends Volatile<T> {
   /**
    * Works similarly to Promise.all
    */
-  static all<T extends unknown[]>(providers: {
+  static all<T extends readonly unknown[]>(providers: {
     [K in keyof T]: Volatile<T[K]>;
   }) {
-    return providers.reduce<Cascade<any[]>>(
+    return providers.reduce<Cascade<readonly any[]>>(
       (a, b) => a.join((arr) => b.pipe((val) => [...arr, val])),
       Cascade.const([])
     ) as Cascade<T>;

@@ -57,13 +57,13 @@ export abstract class Volatile<T = any> {
     this.prevError = this.curError;
   }
 
-  private closeCbs: (() => void)[]= []
+  private closeCbs: (() => void)[] = [];
   onClose(cb: () => void) {
     this.closeCbs.push(cb);
   }
 
   close() {
-    this.closeCbs.forEach(cb => cb())
+    this.closeCbs.forEach((cb) => cb());
   }
 
   /**
@@ -108,7 +108,7 @@ export abstract class Volatile<T = any> {
 
   /**
    * Chains a computation that returns a Cascade that outputs the nested type
-   * 
+   *
    * Calling invalidate will re-run the given compute function
    */
   join<S>(compute: Compute<Volatile<S>, T>): Cascade<S> {
@@ -134,7 +134,7 @@ export abstract class Volatile<T = any> {
     return this.join(compute);
   }
 
-  flat<T>(): Cascade<T> {
+  flat<T>(): Cascade<BaseType<T>> {
     return Cascade.flatten<any>(this);
   }
 
@@ -227,7 +227,7 @@ export class Cascade<T = any> extends Volatile<T> {
 
   close() {
     this.handles.forEach((handle) => handle.close());
-    super.close()
+    super.close();
   }
 
   /**
@@ -262,12 +262,13 @@ export class Cascade<T = any> extends Volatile<T> {
     });
   }
 
-  static flatten<T>(nestedCascade: Nested<T>): Cascade<T> {
+  static flatten<T extends Nested>(nestedCascade: T): Cascade<BaseType<T>> {
     if (nestedCascade instanceof Volatile) {
       return nestedCascade.join((result) => Cascade.flatten(result));
     }
-    return new Cascade(() => nestedCascade);
+    return new Cascade(() => nestedCascade as BaseType<T>);
   }
 }
 
-type Nested<T> = T | Volatile<Nested<T>>;
+type Nested<T = unknown> = T | Volatile<Nested<T>>;
+type BaseType<T> = T extends Volatile<infer S> ? BaseType<S> : T;

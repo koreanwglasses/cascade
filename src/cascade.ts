@@ -180,7 +180,21 @@ export class Cascade<T = any> extends Volatile<T> {
   private handles: ListenerHandle[] = [];
 
   private setDeps(deps: Volatile[]) {
-    const handles = [...new Set(deps)].map((dep) =>
+    let depsUnique = [...new Set(deps)];
+
+    if (deps.length > 0 && depsUnique.length === 0) {
+      /**
+       * Handles a strange bug where new Set([...]) returns an empty
+       * set even when initialized with a non-empty array
+       */
+
+      depsUnique = deps.reduce((a, b) => {
+        if (!a.includes(b)) a.push(b);
+        return a;
+      }, [] as Volatile[]);
+    }
+
+    const handles = depsUnique.map((dep) =>
       (dep as Cascade).listen(() => this.invalidate())
     );
 
@@ -220,9 +234,9 @@ export class Cascade<T = any> extends Volatile<T> {
     } catch (e) {
       if (e !== DEFER_RESULT)
         this.report(e, undefined, forceNotify || this.alwaysNotify);
+    } finally {
+      this.setDeps(deps);
     }
-
-    this.setDeps(deps);
   }
 
   close() {

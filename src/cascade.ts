@@ -1,4 +1,5 @@
 import deepIs from "deep-is";
+import { Listener, ListenerHandle, Whenever, BaseType, Nested } from "./types";
 
 /**
  * throw this to abort computation without
@@ -6,11 +7,6 @@ import deepIs from "deep-is";
  * wait until the next update from a dependency
  */
 export const DEFER_RESULT = "CASCADE_DEFER_RESULT";
-
-type Whenever<T> = T | Promise<T>;
-
-type Listener = () => void;
-type ListenerHandle = { close(): void };
 
 export abstract class Volatile<T = any> {
   /**
@@ -134,7 +130,7 @@ export abstract class Volatile<T = any> {
     return this.join(compute);
   }
 
-  flat<T>(): Cascade<BaseType<T>> {
+  flat(): Cascade<BaseType<T>> {
     return Cascade.flatten<any>(this);
   }
 
@@ -296,6 +292,3 @@ export class Cascade<T = any> extends Volatile<T> {
     return new Cascade(() => value as BaseType<T>);
   }
 }
-
-type Nested<T = unknown> = T | Volatile<Nested<T>>;
-type BaseType<T> = T extends Volatile<infer S> ? BaseType<S> : T;

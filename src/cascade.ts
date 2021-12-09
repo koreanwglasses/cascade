@@ -140,8 +140,12 @@ export abstract class Volatile<T = any> {
 
   next(): Promise<T> {
     if (this.isValid) {
-      if (this.curError) return Promise.reject(this.curError);
-      return Promise.resolve(this.curValue!);
+      const result = this.curError
+        ? Promise.reject(this.curError)
+        : Promise.resolve(this.curValue!);
+
+      if (this.listeners.length === 0) this.close();
+      return result;
     }
 
     return new Promise((res, rej) => {
@@ -212,7 +216,7 @@ export class Cascade<T = any> extends Volatile<T> {
    *
    * @param compute The expression to be evaluated
    * @param alwaysNotify Set this to true to notify listeners on every
-   * invalidate even if the compute value doesn't change
+   * invalidate even if the computed value doesn't change
    */
   constructor(private compute: Compute<T>, private alwaysNotify = false) {
     super();
@@ -276,11 +280,20 @@ export class Cascade<T = any> extends Volatile<T> {
     });
   }
 
-  static flatten<T extends Nested>(nestedCascade: T): Cascade<BaseType<T>> {
-    if (nestedCascade instanceof Volatile) {
-      return nestedCascade.join((result) => Cascade.flatten(result));
+  static flatten<T extends Nested>(value: Whenever<T>): Cascade<BaseType<T>> {
+    if (value instanceof Volatile) {
+      return value.join((result) => Cascade.flatten(result));
     }
-    return new Cascade(() => nestedCascade as BaseType<T>);
+    if (
+      value &&
+      typeof value === "object" &&
+      "then" in (value as object) &&
+      typeof (value as { then: unknown }).then === "function"
+    ) {
+      // value is thenable
+      return Cascade.flatten(new Cascade(() => value));
+    }
+    return new Cascade(() => value as BaseType<T>);
   }
 }
 

@@ -130,8 +130,22 @@ export abstract class Volatile<T = any> {
     return this.join(compute);
   }
 
-  flat(): Cascade<BaseType<T>> {
-    return Cascade.flatten<any>(this);
+  flat(): Cascade<BaseType<T>>;
+  flat<S>(compute: Compute<S, BaseType<T>>): Cascade<S>;
+  /** @internal */
+  flat<S>(compute?: Compute<S, BaseType<T>>): Cascade<BaseType<T>> | Cascade<S>;
+  flat<S>(
+    compute?: Compute<S, BaseType<T>>
+  ): Cascade<BaseType<T>> | Cascade<S> {
+    return compute
+      ? Cascade.flatten<any>(this).pipe(compute)
+      : Cascade.flatten<any>(this);
+  }
+
+  f(): Cascade<BaseType<T>>;
+  f<S>(compute: Compute<S, BaseType<T>>): Cascade<S>;
+  f<S>(compute?: Compute<S, BaseType<T>>) {
+    return this.flat(compute);
   }
 
   next(): Promise<T> {

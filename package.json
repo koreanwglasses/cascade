@@ -1,6 +1,6 @@
 {
   "name": "@koreanwglasses/cascade",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "packageManager": "yarn@3.1.1",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

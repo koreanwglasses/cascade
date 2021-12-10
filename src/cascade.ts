@@ -158,11 +158,11 @@ export abstract class Volatile<T = any> {
   /**
    * Pipes then calls flatten or flattenAll on the result
    */
-  _<S extends readonly Nested[]>(
+  pf<S extends readonly Nested[]>(
     compute: Compute<S, T>
   ): Cascade<ArrayBaseType<S>>;
-  _<S extends Nested>(compute: Compute<S, T>): Cascade<BaseType<S>>;
-  _<S>(compute: Compute<S, T>): Cascade<any> {
+  pf<S extends Nested>(compute: Compute<S, T>): Cascade<BaseType<S>>;
+  pf<S>(compute: Compute<S, T>): Cascade<any> {
     return this.pipe(compute).join((result) =>
       Array.isArray(result)
         ? Cascade.flattenAll<any>(result)

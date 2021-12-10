@@ -1,5 +1,12 @@
 import deepIs from "deep-is";
-import { Listener, ListenerHandle, Whenever, BaseType, Nested } from "./types";
+import {
+  Listener,
+  ListenerHandle,
+  Whenever,
+  BaseType,
+  Nested,
+  ArrayBaseType,
+} from "./types";
 
 /**
  * throw this to abort computation without
@@ -146,6 +153,21 @@ export abstract class Volatile<T = any> {
   f<S>(compute: Compute<S, BaseType<T>>): Cascade<S>;
   f<S>(compute?: Compute<S, BaseType<T>>) {
     return this.flat(compute);
+  }
+
+  /**
+   * Pipes then calls flatten or flattenAll on the result
+   */
+  _<S extends readonly Nested[]>(
+    compute: Compute<S, T>
+  ): Cascade<ArrayBaseType<S>>;
+  _<S extends Nested>(compute: Compute<S, T>): Cascade<BaseType<S>>;
+  _<S>(compute: Compute<S, T>): Cascade<any> {
+    return this.pipe(compute).join((result) =>
+      Array.isArray(result)
+        ? Cascade.flattenAll<any>(result)
+        : Cascade.flatten<any>(result)
+    );
   }
 
   next(): Promise<T> {
@@ -304,5 +326,11 @@ export class Cascade<T = any> extends Volatile<T> {
       return Cascade.flatten(new Cascade(() => value));
     }
     return new Cascade(() => value as BaseType<T>);
+  }
+
+  static flattenAll<T extends readonly Nested[]>(
+    array: T
+  ): Cascade<ArrayBaseType<T>> {
+    return Cascade.all<any>(array.map(Cascade.flatten));
   }
 }

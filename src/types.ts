@@ -1,4 +1,4 @@
-import { Volatile } from ".";
+import { Volatile, $ } from ".";
 
 export type Whenever<T> = T | Promise<T>;
 
@@ -18,7 +18,7 @@ export type Compute<S, T = undefined> = (
 ) => Whenever<S>;
 
 export type $Compute<S, T = {}> = (
-  $: $Flat<T> & (<S>($: S) => $<S>),
+  $: T & (<S>($: S) => $<S>),
   /**
    * Add a dependency on external state
    */
@@ -31,14 +31,10 @@ export type $Flat<T> = T extends $<infer S>
 
 export type $Unpacked<S> = S extends $<infer T> ? T : never;
 
-export class $<T = unknown> {
-  constructor(readonly $: T) {}
-}
-
 export type Override<T, S> = {
   [K in keyof T | keyof S]: K extends keyof S
     ? S[K]
     : K extends keyof T
     ? T[K]
     : never;
-}
+};

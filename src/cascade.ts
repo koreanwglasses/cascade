@@ -6,7 +6,6 @@ import {
   BaseType,
   Nested,
   $Flat,
-  $,
   $Compute,
   Compute,
   $Unpacked,
@@ -164,37 +163,30 @@ export abstract class Volatile<T = any> {
     compute: $Compute<S, T>
   ): Cascade<
     void extends S
-      ? $Flat<T>
+      ? T
       : S extends $
-      ? Override<$Flat<T>, $Unpacked<S>>
-      : S
+      ? Override<T, $Flat<S>>
+      : BaseType<Awaited<S>>
   >;
-  $<S>(value: S): Cascade<Override<$Flat<T>, S>>;
-  $<S>(value_compute: S | $Compute<S, T>): Cascade<S> {
-    return this.join(($in) =>
-      // flatten $
-      Cascade.all(
-        Object.entries($in).map(([key, value]) =>
-          Cascade.flatten(value).pipe((value) => [key, value])
-        )
-      ).pipe(Object.fromEntries)
-    ).pipe(async ($in, deps) => {
+  $<S>(value: S): Cascade<Override<T, $Flat<S>>>;
+  $<S>(value_compute: S | $Compute<S, T>) {
+    return this.join<any>(async (prev, deps) => {
       if (typeof value_compute === "function") {
         const compute = value_compute as $Compute<S, T>;
 
-        const _$in = Object.assign(function ($out: S) {
+        const $in = Object.assign(function ($out: any) {
           return new $($out);
-        }, $in);
+        }, prev);
 
-        const retval = await compute(_$in, deps);
+        const retval = await compute($in, deps);
 
         return typeof retval === "undefined"
-          ? { ..._$in }
+          ? (Cascade.const({ ...$in }) as Cascade<T>)
           : retval instanceof $
-          ? { ..._$in, ...retval.$ }
-          : retval;
+          ? (retval as $<S>).flatten<T>($in)
+          : Cascade.flatten(retval);
       } else {
-        return Object.assign($in, value_compute);
+        return new $(value_compute).flatten(prev);
       }
     });
   }
@@ -349,9 +341,28 @@ export class Cascade<T = any> extends Volatile<T> {
     return new Cascade(() => value as BaseType<T>);
   }
 
+  static $<T>(value: T): Cascade<$Flat<T>>;
+  static $<T>(
+    compute: $Compute<T>
+  ): Cascade<
+    void extends T
+      ? {}
+      : T extends $
+      ? Override<T, $Flat<T>>
+      : BaseType<Awaited<T>>
+  >;
   static $<T>(value: T | $Compute<T>) {
-    return typeof value === "function"
-      ? Cascade.const({}).$(value as $Compute<T>)
-      : Cascade.const(value);
+    return Cascade.const({}).$(value);
+  }
+}
+
+export class $<S = unknown> {
+  constructor(readonly $: S) {}
+  flatten<T>(prev: T): Cascade<Override<T, $Flat<S>>> {
+    return Cascade.all(
+      Object.entries(this.$).map(([key, value]) =>
+        Cascade.all([Cascade.const(key), Cascade.flatten(value)])
+      )
+    ).p((entries) => ({ ...prev, ...Object.fromEntries(entries) }));
   }
 }

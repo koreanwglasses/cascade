@@ -10,6 +10,7 @@ import {
   $Compute,
   Compute,
   $Unpacked,
+  Override,
 } from "./types";
 
 /**
@@ -161,8 +162,14 @@ export abstract class Volatile<T = any> {
 
   $<S>(
     compute: $Compute<S, T>
-  ): Cascade<void extends S ? $Flat<T> : S extends $ ? $Unpacked<S> & $Flat<T> : S>;
-  $<S>(value: S): Cascade<S & $Flat<T>>;
+  ): Cascade<
+    void extends S
+      ? $Flat<T>
+      : S extends $
+      ? Override<$Flat<T>, $Unpacked<S>>
+      : S
+  >;
+  $<S>(value: S): Cascade<Override<$Flat<T>, S>>;
   $<S>(value_compute: S | $Compute<S, T>): Cascade<S> {
     return this.join(($in) =>
       // flatten $
@@ -182,12 +189,12 @@ export abstract class Volatile<T = any> {
         const retval = await compute(_$in, deps);
 
         return typeof retval === "undefined"
-          ? $in
+          ? { ..._$in }
           : retval instanceof $
-          ? Object.assign(retval.$, $in)
+          ? { ..._$in, ...retval.$ }
           : retval;
       } else {
-        return Object.assign(value_compute, $in);
+        return Object.assign($in, value_compute);
       }
     });
   }

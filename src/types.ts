@@ -34,3 +34,11 @@ export type $Unpacked<S> = S extends $<infer T> ? T : never;
 export class $<T = unknown> {
   constructor(readonly $: T) {}
 }
+
+export type Override<T, S> = {
+  [K in keyof T | keyof S]: K extends keyof S
+    ? S[K]
+    : K extends keyof T
+    ? T[K]
+    : never;
+}

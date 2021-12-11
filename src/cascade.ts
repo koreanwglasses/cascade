@@ -5,7 +5,11 @@ import {
   Whenever,
   BaseType,
   Nested,
-  ArrayBaseType,
+  $Flat,
+  $,
+  $Compute,
+  Compute,
+  $Unpacked,
 } from "./types";
 
 /**
@@ -155,19 +159,37 @@ export abstract class Volatile<T = any> {
     return this.flat(compute);
   }
 
-  /**
-   * Pipes then calls flatten or flattenAll on the result
-   */
-  pf<S extends readonly Nested[]>(
-    compute: Compute<S, T>
-  ): Cascade<ArrayBaseType<S>>;
-  pf<S extends Nested>(compute: Compute<S, T>): Cascade<BaseType<S>>;
-  pf<S>(compute: Compute<S, T>): Cascade<any> {
-    return this.pipe(compute).join((result) =>
-      Array.isArray(result)
-        ? Cascade.flattenAll<any>(result)
-        : Cascade.flatten<any>(result)
-    );
+  $<S>(
+    compute: $Compute<S, T>
+  ): Cascade<void extends S ? $Flat<T> : S extends $ ? $Unpacked<S> & $Flat<T> : S>;
+  $<S>(value: S): Cascade<S & $Flat<T>>;
+  $<S>(value_compute: S | $Compute<S, T>): Cascade<S> {
+    return this.join(($in) =>
+      // flatten $
+      Cascade.all(
+        Object.entries($in).map(([key, value]) =>
+          Cascade.flatten(value).pipe((value) => [key, value])
+        )
+      ).pipe(Object.fromEntries)
+    ).pipe(async ($in, deps) => {
+      if (typeof value_compute === "function") {
+        const compute = value_compute as $Compute<S, T>;
+
+        const _$in = Object.assign(function ($out: S) {
+          return new $($out);
+        }, $in);
+
+        const retval = await compute(_$in, deps);
+
+        return typeof retval === "undefined"
+          ? $in
+          : retval instanceof $
+          ? Object.assign(retval.$, $in)
+          : retval;
+      } else {
+        return Object.assign(value_compute, $in);
+      }
+    });
   }
 
   next(): Promise<T> {
@@ -200,14 +222,6 @@ export class Managed<T = any> extends Volatile<T> {
     this.report(error, undefined, forceNotify);
   }
 }
-
-export type Compute<S, T = undefined> = (
-  value: T,
-  /**
-   * Add a dependency on external state
-   */
-  addDependency: (...dependencies: Volatile[]) => void
-) => Whenever<S>;
 
 export class Cascade<T = any> extends Volatile<T> {
   /**
@@ -328,9 +342,9 @@ export class Cascade<T = any> extends Volatile<T> {
     return new Cascade(() => value as BaseType<T>);
   }
 
-  static flattenAll<T extends readonly Nested[]>(
-    array: T
-  ): Cascade<ArrayBaseType<T>> {
-    return Cascade.all<any>(array.map(Cascade.flatten));
+  static $<T>(value: T | $Compute<T>) {
+    return typeof value === "function"
+      ? Cascade.const({}).$(value as $Compute<T>)
+      : Cascade.const(value);
   }
 }

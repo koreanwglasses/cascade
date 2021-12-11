@@ -7,7 +7,7 @@ export type ListenerHandle = { close(): void };
 
 export type Nested<T = unknown> = T | Volatile<Nested<T>>;
 
-export type BaseType<T> = T extends Volatile<infer S> ? BaseType<S> : T;
+export type BaseType<T> = Awaited<T> extends Volatile<infer S> ? BaseType<S> : T;
 
 export type Compute<S, T = undefined> = (
   value: T,

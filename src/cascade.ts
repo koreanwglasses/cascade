@@ -178,13 +178,15 @@ export abstract class Volatile<T = any> {
           return new $($out);
         }, prev);
 
-        const retval = await compute($in, deps);
+        const retval = Cascade.flatten(compute($in, deps));
 
-        return typeof retval === "undefined"
-          ? (Cascade.const({ ...$in }) as Cascade<T>)
-          : retval instanceof $
-          ? (retval as $<S>).flatten<T>($in)
-          : Cascade.flatten(retval);
+        return retval.pipe((retval) =>
+          typeof retval === "undefined"
+            ? { ...$in }
+            : retval instanceof $
+            ? (retval as $<S>).flatten<T>($in)
+            : retval
+        );
       } else {
         return new $(value_compute).flatten(prev);
       }

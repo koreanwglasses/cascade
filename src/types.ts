@@ -3,7 +3,7 @@ import { Volatile, $ } from ".";
 export type Whenever<T> = T | Promise<T>;
 
 export type Listener = () => void;
-export type ListenerHandle = { close(): void };
+export type ListenerHandle = { close(keepAlive?: boolean): void };
 
 export type Nested<T = unknown> = T | Volatile<Nested<T>>;
 

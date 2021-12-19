@@ -28,11 +28,11 @@ export abstract class Volatile<T = any> {
   protected listen(listener: Listener): ListenerHandle {
     this.listeners.push(listener);
     return {
-      close: () => {
+      close: (keepAlive) => {
         const i = this.listeners.indexOf(listener);
         if (i !== -1) this.listeners.splice(i, 1);
 
-        if (this.listeners.length === 0) this.close();
+        if (!keepAlive && this.listeners.length === 0) this.close();
       },
     };
   }
@@ -193,11 +193,15 @@ export abstract class Volatile<T = any> {
     });
   }
 
-  next(): Promise<T> {
+  next(keepAlive = false): Promise<T> {
     if (this.isValid) {
-      return this.curError
+      const result = this.curError
         ? Promise.reject(this.curError)
         : Promise.resolve(this.curValue!);
+
+      if (!keepAlive && this.listeners.length === 0) this.close();
+
+      return result;
     }
 
     return new Promise((res, rej) => {
@@ -205,7 +209,7 @@ export abstract class Volatile<T = any> {
         if (this.curError) rej(this.curError);
         else res(this.curValue!);
 
-        handle.close();
+        handle.close(keepAlive);
       });
     });
   }

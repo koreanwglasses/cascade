@@ -195,12 +195,9 @@ export abstract class Volatile<T = any> {
 
   next(): Promise<T> {
     if (this.isValid) {
-      const result = this.curError
+      return this.curError
         ? Promise.reject(this.curError)
         : Promise.resolve(this.curValue!);
-
-      if (this.listeners.length === 0) this.close();
-      return result;
     }
 
     return new Promise((res, rej) => {

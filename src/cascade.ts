@@ -165,12 +165,12 @@ export abstract class Volatile<T = any> {
     void extends S
       ? T
       : S extends $
-      ? Override<T, $Flat<S>>
+      ? Override<T, $Flat<BaseType<Awaited<S>>>>
       : BaseType<Awaited<S>>
   >;
-  $<S>(value: S): Cascade<Override<T, $Flat<S>>>;
+  $<S>(value: S): Cascade<Override<T, $Flat<BaseType<Awaited<S>>>>>;
   $<S>(value_compute: S | $Compute<S, T>) {
-    return this.join<any>(async (prev, deps) => {
+    return this.join<any>((prev, deps) => {
       if (typeof value_compute === "function") {
         const compute = value_compute as $Compute<S, T>;
 
@@ -178,15 +178,15 @@ export abstract class Volatile<T = any> {
           return new $($out);
         }, prev);
 
-        const retval = Cascade.flatten(compute($in, deps));
-
-        return retval.pipe((retval) =>
-          typeof retval === "undefined"
-            ? { ...$in }
-            : retval instanceof $
-            ? (retval as $<S>).flatten<T>($in)
-            : retval
-        );
+        return Cascade.flatten(compute($in, deps))
+          .pipe((retval) =>
+            typeof retval === "undefined"
+              ? { ...$in }
+              : retval instanceof $
+              ? (retval as $<S>).flatten<T>($in)
+              : retval
+          )
+          .flat();
       } else {
         return new $(value_compute).flatten(prev);
       }

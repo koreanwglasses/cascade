@@ -167,7 +167,7 @@ export abstract class Volatile<T = any> {
     return Cascade.flatten<any>(this);
   }
 
-  $<S>(compute: $Compute<S, T>): Cascade<FlatValueType<S>>;
+  $<S>(compute: $Compute<S, T>): Cascade<void extends S ? T : FlatValueType<S>>;
   $<S>(value: S): Cascade<SplatValueType<[T, S]>>;
   $<S>(value_compute: S | $Compute<S, T>) {
     return this.join<any>((prev, deps) => {

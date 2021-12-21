@@ -90,8 +90,14 @@ export abstract class Volatile<T = any> {
     this.closeCbs.push(cb);
   }
 
+  private _isClosed = false;
+  get isClosed() {
+    return this._isClosed;
+  }
+
   close() {
     this.closeCbs.forEach((cb) => cb());
+    this._isClosed = true;
   }
 
   /**
@@ -214,7 +220,12 @@ export abstract class Volatile<T = any> {
     });
   }
 
-  next(keepAlive = false): Promise<T> {
+  /**
+   * Gets the current value or next valid value. By default,
+   * if there are no other listeners, this Volatile will close
+   * once a value is returned. Set keepAlive = true to disable this.
+   */
+  get(keepAlive = false): Promise<T> {
     if (this.isValid) {
       const result = this.curError
         ? Promise.reject(this.curError)
@@ -233,6 +244,28 @@ export abstract class Volatile<T = any> {
         handle.close(keepAlive);
       });
     });
+  }
+
+  /**
+   * Waits for the the next reported value
+   */
+  next(): Promise<T> {
+    return new Promise((res, rej) => {
+      const handle = this.listen(() => {
+        if (this.curError) rej(this.curError);
+        else res(this.curValue!);
+        handle.close(true);
+      });
+    });
+  }
+
+  toAsyncGenerator() {
+    const provider = this;
+    return (async function* () {
+      while(!provider.isClosed) {
+        yield await provider.next();
+      }
+    })();
   }
 }
 

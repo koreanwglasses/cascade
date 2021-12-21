@@ -1,4 +1,3 @@
-import deepIs from "deep-is";
 import {
   Listener,
   ListenerHandle,
@@ -8,9 +7,9 @@ import {
   $Flat,
   $Compute,
   Compute,
-  $Unpacked,
   Override,
 } from "./types";
+import hash from "object-hash";
 
 /**
  * throw this to abort computation without
@@ -41,27 +40,49 @@ export abstract class Volatile<T = any> {
   private curValue?: T;
   private curError?: any;
 
-  private prevValue?: T;
-  private prevError?: any;
+  // private prevValue?: T;
+  // private prevError?: any;
+  private prevValueHash?: any;
+  private prevErrorHash?: any;
+
+  /**
+   * Use hashes to track changes. This is helpful for checking
+   * if the contents of an object have changed, even if its
+   * the same object reference.
+   *
+   * TODO: Hashes have a small chance of collision, i.e. a small
+   * chance that a change to an object will go undetected.
+   * Address this?
+   */
+  protected hash(value: any) {
+    if (typeof value === "function" || typeof value === "object") {
+      return hash(value);
+    } else {
+      return value;
+    }
+  }
 
   protected report(error: any, value?: T, forceNotify = false) {
     this.curError = error;
     this.curValue = value;
     this.isValid = true;
 
+    const errorHash = this.hash(error);
+    const valueHash = this.hash(value);
+
     // Notify dependents of changes
     if (
       forceNotify ||
-      (!("prevError" in this) && !("prevValue" in this)) ||
-      (this.curError
-        ? !deepIs(this.curError, this.prevError)
-        : !deepIs(this.curValue, this.prevValue))
+      (!("prevErrorHash" in this) && !("prevValueHash" in this)) ||
+      (error
+        ? this.prevErrorHash !== errorHash
+        : this.prevValueHash != valueHash)
     ) {
       [...this.listeners].forEach((listener) => listener());
     }
 
-    this.prevValue = this.curValue;
-    this.prevError = this.curError;
+    this.prevValueHash = valueHash;
+    this.prevErrorHash = errorHash;
   }
 
   private closeCbs: (() => void)[] = [];

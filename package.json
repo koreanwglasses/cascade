@@ -1,6 +1,6 @@
 {
   "name": "@koreanwglasses/cascade",
-  "version": "0.5.11",
+  "version": "0.5.12",
   "packageManager": "yarn@3.1.1",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,10 +14,11 @@
   "devDependencies": {
     "@types/deep-equal": "^1.0.1",
     "@types/node": "^16.11.11",
+    "@types/object-hash": "^2.2.1",
     "tsc": "^2.0.3",
     "typescript": "^4.5.2"
   },
   "dependencies": {
-    "deep-is": "^0.1.4"
+    "object-hash": "^2.2.0"
   }
 }

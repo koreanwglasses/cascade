@@ -10,6 +10,7 @@ import {
   Override,
 } from "./types";
 import hash from "object-hash";
+import { CascadeError } from "./errors";
 
 /**
  * throw this to abort computation without
@@ -56,7 +57,11 @@ export abstract class Volatile<T = any> {
    */
   protected hash(value: any) {
     if (typeof value === "function" || typeof value === "object") {
-      return hash(value);
+      try {
+        return hash(value);
+      } catch (e) {
+        throw new CascadeError("Failed to hash incoming value", e as Error);
+      }
     } else {
       return value;
     }
@@ -262,7 +267,7 @@ export abstract class Volatile<T = any> {
   toAsyncGenerator() {
     const provider = this;
     return (async function* () {
-      while(!provider.isClosed) {
+      while (!provider.isClosed) {
         yield await provider.next();
       }
     })();

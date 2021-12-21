@@ -2,12 +2,12 @@ import {
   Listener,
   ListenerHandle,
   Whenever,
-  BaseType,
-  Nested,
-  $Flat,
+  FlatValueType,
+  NestedCascade,
+  AllFlatValueType,
   $Compute,
   Compute,
-  Override,
+  SplatValueType,
 } from "./types";
 import hash from "object-hash";
 import { CascadeError } from "./errors";
@@ -41,8 +41,6 @@ export abstract class Volatile<T = any> {
   private curValue?: T;
   private curError?: any;
 
-  // private prevValue?: T;
-  // private prevError?: any;
   private prevValueHash?: any;
   private prevErrorHash?: any;
 
@@ -127,10 +125,6 @@ export abstract class Volatile<T = any> {
     }, alwaysNotify);
   }
 
-  p<S>(compute: Compute<S, T>, alwaysNotify?: boolean) {
-    return this.pipe(compute, alwaysNotify);
-  }
-
   /**
    * Catch any errors thrown by an upstream Cascade
    */
@@ -169,58 +163,30 @@ export abstract class Volatile<T = any> {
     });
   }
 
-  j<S>(compute: Compute<Volatile<S>, T>): Cascade<S> {
-    return this.join(compute);
+  flat(): Cascade<FlatValueType<T>> {
+    return Cascade.flatten<any>(this);
   }
 
-  flat(): Cascade<BaseType<T>>;
-  flat<S>(compute: Compute<S, BaseType<T>>): Cascade<S>;
-  /** @internal */
-  flat<S>(compute?: Compute<S, BaseType<T>>): Cascade<BaseType<T>> | Cascade<S>;
-  flat<S>(
-    compute?: Compute<S, BaseType<T>>
-  ): Cascade<BaseType<T>> | Cascade<S> {
-    return compute
-      ? Cascade.flatten<any>(this).pipe(compute)
-      : Cascade.flatten<any>(this);
-  }
-
-  f(): Cascade<BaseType<T>>;
-  f<S>(compute: Compute<S, BaseType<T>>): Cascade<S>;
-  f<S>(compute?: Compute<S, BaseType<T>>) {
-    return this.flat(compute);
-  }
-
-  $<S>(
-    compute: $Compute<S, T>
-  ): Cascade<
-    void extends S
-      ? T
-      : S extends $
-      ? Override<T, $Flat<BaseType<Awaited<S>>>>
-      : BaseType<Awaited<S>>
-  >;
-  $<S>(value: S): Cascade<Override<T, $Flat<BaseType<Awaited<S>>>>>;
+  $<S>(compute: $Compute<S, T>): Cascade<FlatValueType<S>>;
+  $<S>(value: S): Cascade<SplatValueType<[T, S]>>;
   $<S>(value_compute: S | $Compute<S, T>) {
     return this.join<any>((prev, deps) => {
       if (typeof value_compute === "function") {
         const compute = value_compute as $Compute<S, T>;
 
-        const $in = Object.assign(function ($out: any) {
-          return new $($out);
+        const $ = Object.assign(function <R>(value: R) {
+          return Cascade.$(prev, value);
         }, prev);
 
-        return Cascade.flatten(compute($in, deps))
-          .pipe((retval) =>
-            typeof retval === "undefined"
-              ? { ...$in }
-              : retval instanceof $
-              ? (retval as $<S>).flatten<T>($in)
-              : retval
-          )
-          .flat();
+        const retval = compute($, deps);
+        if (typeof retval === "undefined") {
+          return Cascade.flattenAll($);
+        } else {
+          return Cascade.flatten(retval);
+        }
       } else {
-        return new $(value_compute).flatten(prev);
+        const value = value_compute;
+        return Cascade.$(prev, value);
       }
     });
   }
@@ -387,7 +353,9 @@ export class Cascade<T = any> extends Volatile<T> {
     });
   }
 
-  static flatten<T extends Nested>(value: Whenever<T>): Cascade<BaseType<T>> {
+  static flatten<T extends NestedCascade>(
+    value: Whenever<T>
+  ): Cascade<FlatValueType<T>> {
     if (value instanceof Volatile) {
       return value.join((result) => Cascade.flatten(result));
     }
@@ -400,31 +368,31 @@ export class Cascade<T = any> extends Volatile<T> {
       // value is thenable
       return Cascade.flatten(new Cascade(() => value));
     }
-    return new Cascade(() => value as BaseType<T>);
+    return new Cascade(() => value as FlatValueType<T>);
   }
 
-  static $<T>(value: T): Cascade<$Flat<T>>;
-  static $<T>(
-    compute: $Compute<T>
-  ): Cascade<
-    void extends T
-      ? {}
-      : T extends $
-      ? Override<T, $Flat<T>>
-      : BaseType<Awaited<T>>
-  >;
-  static $<T>(value: T | $Compute<T>) {
-    return Cascade.const({}).$(value);
+  static flattenAll<T>(value: T): Cascade<AllFlatValueType<T>> {
+    if (Array.isArray(value)) {
+      return Cascade.all(value.map((v) => Cascade.flatten(v))) as Cascade<
+        AllFlatValueType<T>
+      >;
+    } else if (
+      value &&
+      (typeof value === "object" || typeof value === "function")
+    ) {
+      return Cascade.all(
+        Object.entries(value).map(([key, value]) =>
+          Cascade.flatten(value).pipe((value) => [key, value])
+        )
+      ).pipe(Object.fromEntries);
+    } else {
+      return Cascade.flatten(value) as Cascade<AllFlatValueType<T>>;
+    }
   }
-}
 
-export class $<S = unknown> {
-  constructor(readonly $: S) {}
-  flatten<T>(prev: T): Cascade<Override<T, $Flat<S>>> {
-    return Cascade.all(
-      Object.entries(this.$).map(([key, value]) =>
-        Cascade.all([Cascade.const(key), Cascade.flatten(value)])
-      )
-    ).p((entries) => ({ ...prev, ...Object.fromEntries(entries) }));
+  static $<T extends any[]>(...values: T): Cascade<SplatValueType<T>> {
+    return Cascade.all(values.map((value) => Cascade.flattenAll(value))).pipe(
+      (flattened) => Object.assign({}, ...flattened)
+    );
   }
 }

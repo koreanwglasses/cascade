@@ -1,6 +1,6 @@
 export class CascadeError extends Error {
   name = "CascadeError";
-  constructor(message: string, readonly error?: Error) {
+  constructor(message: string, readonly originalError?: Error) {
     super(message);
   }
 }

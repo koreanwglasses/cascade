@@ -1,35 +1,50 @@
 import { Cascade } from "..";
 
+/**
+ * TODO
+ */
 export type CascadeOpts = {
   notify?: "auto" | "never" | "always";
 };
 
+/**
+ * TODO
+ */
 export type CloseOpts = { keepAlive?: boolean };
 
-export type Unwrapped<T> = T extends Cascade<infer S> ? Unwrapped<S> : T;
+/**
+ * TODO
+ */
+export type Resolvable<T> = T | Promise<T> | Cascade<T> | Promise<Cascade<T>>;
 
-export type AllUnwrapped<T extends Cascade[] | readonly Cascade[]> = T extends []
-  ? []
-  : T extends readonly []
-  ? readonly []
-  : T extends [infer X, ...infer XS]
-  ? XS extends Cascade[]
-    ? [Unwrapped<X>, ...AllUnwrapped<XS>]
-    : never
-  : T extends readonly [infer X, ...infer XS]
-  ? XS extends readonly Cascade[]
-    ? readonly [Unwrapped<X>, ...AllUnwrapped<XS>]
-    : never
-  : T extends (infer S)[]
-  ? Unwrapped<S>[]
-  : T extends readonly (infer S)[]
-  ? readonly Unwrapped<S>[]
-  : never;
+/**
+ * TODO
+ */
+export type Unwrapped<T> = T extends Promise<infer S> | Cascade<infer S>
+  ? Unwrapped<S>
+  : T;
 
+/**
+ * TODO
+ */
+export type AllResolvable<T extends readonly [...any[]]> = {
+  [K in keyof T]: Resolvable<T[K]>;
+};
+
+/**
+ * TODO
+ */
+export type AllUnwrapped<T extends readonly [...any[]]> = {
+  [K in keyof T]: Unwrapped<T[K]>;
+};
+
+/**
+ * TODO
+ * @param value
+ * @param addDependency
+ * @returns
+ */
 export type Compute<S, T = undefined> = (
   value: T,
-  /**
-   * Add a dependency on external state
-   */
   addDependency: (...dependencies: Cascade[]) => void
 ) => S;

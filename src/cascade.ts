@@ -7,8 +7,15 @@ import {
 import { hash } from "./lib/hash";
 import { DEFER_RESULT } from "./lib/consts";
 
+/**
+ * TODO
+ */
 export class Cascade<T = any> {
-  //////////
+  ///////////////
+  // LISTENERS //
+  ///////////////
+
+  // Manage listeners from Cascades that depend on `this`
 
   private listenerManager = new ListenerManager<[opts?: CloseOpts]>();
   private attachedListenerCount = 0;
@@ -22,14 +29,19 @@ export class Cascade<T = any> {
     return this.listenerManager.addListener(
       listener,
       ({ keepAlive = false } = {}) => {
-        if (!detached) this.attachedListenerCount--;
+        if (detached) return;
 
+        this.attachedListenerCount--;
         if (!keepAlive && this.attachedListenerCount <= 0) this.close();
       }
     );
   }
 
-  //////////
+  ///////////////
+  // REPORTING //
+  ///////////////
+
+  // Handle reporting new values/errors and notifying listeners
 
   protected isValid = false;
   private curValue?: T;
@@ -61,7 +73,11 @@ export class Cascade<T = any> {
     if (shouldNotify) this.listenerManager.notify();
   }
 
-  //////////
+  /////////////
+  // HANDLES //
+  /////////////
+
+  // Keep track of handles from Cascades `this` is listening to
 
   private handles: ListenerHandle<[opts?: CloseOpts]>[] = [];
 
@@ -74,19 +90,14 @@ export class Cascade<T = any> {
     this.handles = handles;
   }
 
-  /////////////////
-  // CONSTRUCTOR //
-  /////////////////
+  //////////////////
+  // CONSTRUCTION //
+  //////////////////
 
   /**
-   * The compute expression is evaluated when:
-   * 1) `this.invalidate()` is called, or
-   * 2) `invalidate()` is called on one of its dependencies.
-   *
-   * If the result of the computation has changed (tested
-   * using deepEqual), then dependent `Cascade`s are invalidated
-   *
-   * @param compute The expression to be evaluated
+   * TODO
+   * @param compute
+   * @param opts
    */
   constructor(
     private compute: (
@@ -97,26 +108,50 @@ export class Cascade<T = any> {
     this.invalidate();
   }
 
-  ////////////
+  /////////////
+  // CLOSING //
+  /////////////
 
+  // Handle closing `this`, unlinking all handles and 
+  // notifying any onClose listeners
+
+  /**
+   * TODO
+   * @param opts
+   */
   close(opts?: CloseOpts) {
     this.handles.forEach((handle) => handle.close(opts));
     this._isClosed = true;
     this.closeListenerManager.notify();
   }
 
-  private closeListenerManager = new ListenerManager();
+  /**
+   * TODO
+   * @param listener
+   * @returns
+   */
   onClose(listener: () => void) {
     return this.closeListenerManager.addListener(listener);
   }
+  private closeListenerManager = new ListenerManager();
 
-  private _isClosed = false;
+  /**
+   * TODO
+   */
   get isClosed() {
     return this._isClosed;
   }
+  private _isClosed = false;
 
-  ////////////
+  /////////////////
+  // COMPUTATION //
+  /////////////////
 
+  // Handle re-computation, piping, etc. 
+
+  /**
+   *
+   */
   async invalidate() {
     this.isValid = false;
 
@@ -133,10 +168,11 @@ export class Cascade<T = any> {
     }
   }
 
-  ////////////
-
   /**
-   * Chain the output of this Cascade into another computation
+   * TODO
+   * @param compute
+   * @param opts
+   * @returns
    */
   pipe<S>(compute: Compute<S, T>, opts?: CascadeOpts): Cascade<Unwrapped<S>> {
     const computed = new Cascade(
@@ -154,6 +190,27 @@ export class Cascade<T = any> {
     });
   }
 
+  /**
+   * TODO
+   * @param compute
+   * @param opts
+   * @returns
+   */
+  pipeAll<S extends readonly [...any[]]>(
+    compute: Compute<S, T>,
+    opts?: CascadeOpts
+  ) {
+    return this.pipe(
+      (value, deps) => Cascade.all(compute(value, deps)),
+      opts
+    ) as Cascade<AllUnwrapped<S>>;
+  }
+
+  /**
+   * TODO
+   * @param callback
+   * @returns
+   */
   tap(callback: (value: T) => void) {
     this.listen(
       () => {
@@ -167,7 +224,9 @@ export class Cascade<T = any> {
   }
 
   /**
-   * Catch any errors thrown by an upstream Cascade
+   * TODO
+   * @param handler
+   * @returns
    */
   catch<S>(handler: (error: any) => S) {
     this.listen(
@@ -181,7 +240,8 @@ export class Cascade<T = any> {
   }
 
   /**
-   * Gets the current value or next valid value if invalid
+   * TODO
+   * @returns
    */
   get(): Promise<T> {
     if (this.isValid) {
@@ -196,23 +256,28 @@ export class Cascade<T = any> {
   }
 
   /**
-   * Waits for the the next reported value, whether or not the current value is
-   * valid
+   * TODO
+   * @returns
    */
   next(): Promise<T> {
     return new Promise((res, rej) => {
-      const handle = this.listen(() => {
-        if (this.curError) rej(this.curError);
-        else res(this.curValue!);
+      const handle = this.listen(
+        () => {
+          if (this.curError) rej(this.curError);
+          else res(this.curValue!);
 
-        handle.close({ keepAlive: true });
-      });
+          handle.close();
+        },
+        { detached: true }
+      );
     });
   }
 
   ////////////////////
   // STATIC METHODS //
   ////////////////////
+
+  // Utility functions for Cascades
 
   private static unwrap<T>(
     value: T,
@@ -231,7 +296,9 @@ export class Cascade<T = any> {
   }
 
   /**
-   * Creates a Cascade that throws an error
+   * TODO
+   * @param error
+   * @returns
    */
   static reject(error: any) {
     return new Cascade(() => {
@@ -239,15 +306,27 @@ export class Cascade<T = any> {
     });
   }
 
+  /**
+   * TODO
+   * @param value
+   * @returns
+   */
   static resolve<T>(value: T) {
     const awaited = new Cascade(() => value);
     return new Cascade((deps) => Cascade.unwrap(awaited, deps));
   }
 
-  static all<T extends Cascade[] | readonly Cascade[]>(array: T) {
+  /**
+   * TODO
+   * @param array
+   * @returns
+   */
+  static all<T extends readonly [...any[]]>(array: T) {
     return array.reduce(
       (result, item) =>
-        result.pipe((array) => item.pipe((value) => [...array, value])),
+        (result as Cascade<unknown[]>).pipe((array) =>
+          Cascade.resolve(item).pipe((value) => [...array, value])
+        ),
       new Cascade(() => [])
     ) as Cascade<AllUnwrapped<T>>;
   }

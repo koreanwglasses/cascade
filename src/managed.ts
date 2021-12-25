@@ -1,6 +1,13 @@
 import { Cascade } from ".";
 
+/**
+ * TODO
+ */
 export class Managed<T = any> extends Cascade<T> {
+  /**
+   * TODO
+   * @param initialValue 
+   */
   constructor(initialValue?: T) {
     super(() => {
       throw new Error(
@@ -11,14 +18,25 @@ export class Managed<T = any> extends Cascade<T> {
     if (typeof initialValue !== "undefined") this.value(initialValue);
   }
 
+  /**
+   * TODO
+   * @param value 
+   */
   value(value: T) {
     this.report(null, value);
   }
 
+  /**
+   * TODO
+   * @param error 
+   */
   error(error: any) {
     this.report(error, undefined);
   }
 
+  /**
+   * TODO
+   */
   async invalidate() {
     this.isValid = false;
     /* no-op */

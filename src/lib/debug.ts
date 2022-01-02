@@ -14,65 +14,64 @@ export class DebugInfo {
 
   readonly declaredAt = getUserStackFrame();
 
-  private dependencies?: (DebugInfo | undefined)[];
+  private deps?: (DebugInfo | undefined)[];
   /** @internal */
   setDependencies(dependencies: Cascade[]) {
-    this.dependencies = dependencies.map((dep) => dep.debugInfo);
+    this.deps = dependencies.map((dep) => dep.debugInfo);
   }
 
-  private getRootsInfo(): DebugInfo[] {
-    if (!this.dependencies) return [];
+  private getKeyDeps(): DebugInfo[] {
+    if (!this.deps) return [];
 
-    const rootsInfo = this.dependencies
-      .map((dep) => dep?.getRootsInfo() ?? [])
-      .flat();
+    const keyDeps = this.deps.map((dep) => dep?.getKeyDeps() ?? []).flat();
 
-    if (this.dependencies.length === 0) rootsInfo.push(this);
+    if (this.deps.filter((dep) => dep?.cascade.isClosed).length === 0)
+      keyDeps.push(this);
 
-    return rootsInfo;
+    return keyDeps;
   }
 
   get trace() {
-    type Root = { declaredAt: string[]; num: number; numClosed: number };
-    const roots = new Map<string, Root>();
-    this.getRootsInfo().forEach((info) => {
+    type Dep = { declaredAt: string[]; num: number; numOpen: number };
+    const keyDeps = new Map<string, Dep>();
+    this.getKeyDeps().forEach((info) => {
       const key = info.declaredAt?.join() ?? "UNKNOWN";
 
-      if (roots.has(key)) {
-        const root = roots.get(key)!;
+      if (keyDeps.has(key)) {
+        const root = keyDeps.get(key)!;
         root.num++;
-        if (info.cascade.isClosed) root.numClosed++;
+        if (!info.cascade.isClosed) root.numOpen++;
       } else {
-        roots.set(key, {
-          declaredAt: info.declaredAt ?? ["<unknown>"],
+        keyDeps.set(key, {
+          declaredAt: info.declaredAt ?? ["at <unknown>"],
           num: 1,
-          numClosed: info.cascade.isClosed ? 1 : 0,
+          numOpen: info.cascade.isClosed ? 0 : 1,
         });
       }
     });
 
-    const printInfo = (root: Root) =>
+    const printInfo = (root: Dep) =>
       root.declaredAt
         .map(
           (line, i) =>
             `${
               i === 0
                 ? `  - (${
-                    root.num > 1 ? `${root.numClosed}/${root.num} ` : ""
-                  }${
-                    root.numClosed || root.num > 1 ? "closed" : "open"
-                  }) Cascade declared `
+                    root.num > 1 && root.numOpen > 0
+                      ? `${root.numOpen}/${root.num} `
+                      : ""
+                  }${root.numOpen > 0 ? "open" : "closed"}) Cascade declared `
                 : "    "
             }${line.trim()}\n`
         )
         .join("");
 
     return (
-      (this.declaredAt ?? ["<unknown>"])
+      (this.declaredAt ?? ["at <unknown>"])
         .map((line, i) => `${i === 0 ? `Cascade declared ` : "    "}${line}\n`)
         .join("") +
-      `Root dependencies:\n` +
-      [...roots.values()]
+      `Key dependencies:\n` +
+      [...keyDeps.values()]
         .sort((a, b) => b.num - a.num)
         .map(printInfo)
         .join("")
@@ -81,7 +80,7 @@ export class DebugInfo {
 }
 
 const getUserStackFrame = () => {
-  Error.stackTraceLimit = 100;
+  Error.stackTraceLimit = 20;
   const lines = new Error().stack
     ?.split("\n")
     .slice(1)
@@ -94,5 +93,6 @@ const getUserStackFrame = () => {
           line.includes("node:internal/")
         )
     );
-  return lines;
+
+  if (lines?.length) return lines;
 };

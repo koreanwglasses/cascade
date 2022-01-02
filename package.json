@@ -1,11 +1,12 @@
 {
   "name": "@koreanwglasses/cascade",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "packageManager": "yarn@3.1.1",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "debug"
   ],
   "scripts": {
     "prepare": "$npm_execpath run build",

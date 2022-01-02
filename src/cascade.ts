@@ -1,38 +1,58 @@
-import { Compute, CloseOpts, CascadeOpts, Unwrapped, AllUnwrapped } from ".";
+import {
+  Compute,
+  CloseOpts,
+  CascadeOpts,
+  Unwrapped,
+  AllUnwrapped,
+  CascadeError,
+} from ".";
 import {
   Listener,
   ListenerHandle,
   ListenerManager,
 } from "./lib/listener-manager";
-import { hash } from "./lib/hash";
 import { DEFER_RESULT } from "./lib/consts";
+import { DebugInfo, isDebuggingEnabled } from "./lib/debug";
+import objectHash from "object-hash";
 
 /**
  * TODO
  */
 export class Cascade<T = any> {
+  /** @internal */
+  debugInfo = isDebuggingEnabled ? new DebugInfo() : undefined;
+
   ///////////////
   // LISTENERS //
   ///////////////
 
   // Manage listeners from Cascades that depend on `this`
 
-  private listenerManager = new ListenerManager<[opts?: CloseOpts]>();
+  private listenerManager = new ListenerManager<[], [opts?: CloseOpts]>();
   private attachedListenerCount = 0;
 
   private listen(
     listener: Listener,
     { detached = false }: { detached?: boolean } = {}
   ) {
+    if (this.isClosed)
+      throw new CascadeError(
+        this,
+        "Attempted to add listener to closed cascade"
+      );
+
     if (!detached) this.attachedListenerCount++;
 
     return this.listenerManager.addListener(
       listener,
       ({ keepAlive = false } = {}) => {
-        if (detached) return;
-
-        this.attachedListenerCount--;
-        if (!keepAlive && this.attachedListenerCount <= 0) this.close();
+        if (!detached) this.attachedListenerCount--;
+        if (
+          this.opts.autoclose &&
+          !keepAlive &&
+          this.attachedListenerCount <= 0
+        )
+          this.close();
       }
     );
   }
@@ -59,8 +79,17 @@ export class Cascade<T = any> {
     // this.opts.notify === "auto"
 
     // Notify dependents on change
-    const errorHash = hash(error);
-    const valueHash = hash(value);
+    let errorHash: any;
+    let valueHash: any;
+    try {
+      errorHash = this.hash(error);
+      valueHash = this.hash(value);
+    } catch (e) {
+      // If value could not be hashed, we'll just forward
+      // any updates allowing downstream cascades to
+      // check for changes
+      return this.listenerManager.notify();
+    }
 
     const shouldNotify =
       !this.prevHash ||
@@ -73,26 +102,68 @@ export class Cascade<T = any> {
     if (shouldNotify) this.listenerManager.notify();
   }
 
+  /**
+   * Use hashes to track changes. This is helpful for checking
+   * if the contents of an object have changed, even if its
+   * the same object reference.
+   *
+   * TODO: Hashes have a small chance of collision, i.e. a small
+   * chance that a change to an object will go undetected.
+   * Address this?
+   */
+  private hash(value: any) {
+    if (value && (typeof value === "function" || typeof value === "object")) {
+      try {
+        return objectHash(value);
+      } catch (e) {
+        throw new CascadeError(
+          this,
+          "Error encountered while hashing incoming value",
+          e as Error
+        );
+      }
+    } else {
+      return value;
+    }
+  }
+
   /////////////
   // HANDLES //
   /////////////
 
   // Keep track of handles from Cascades `this` is listening to
 
-  private handles: ListenerHandle<[opts?: CloseOpts]>[] = [];
+  private invHandles: ListenerHandle<[opts?: CloseOpts]>[] = [];
+  private closeHandles: ListenerHandle[] = [];
 
   private updateDependencies(dependencies: Set<Cascade>) {
-    const handles = [...dependencies].map((dep) =>
+    this.debugInfo?.setDependencies([...dependencies]);
+
+    // Remove listeners to onClose first, so when we
+    // remove the regular listeners, this cascade doesn't close
+    this.closeHandles.forEach((handle) => handle.off());
+
+    // Close if any dependency closes
+    this.closeHandles = [...dependencies].map((dep) =>
+      dep.onClose(() => this.close())
+    );
+
+    // Invalidate if any dependencies update
+    const invHandles = [...dependencies].map((dep) =>
       dep.listen(() => this.invalidate())
     );
 
-    this.handles.forEach((handle) => handle.close());
-    this.handles = handles;
+    // Remove existing listeners after setting new ones
+    // to ensure no dependency prematurely closes
+    this.invHandles.forEach((handle) => handle.off());
+    this.invHandles = invHandles;
   }
 
   //////////////////
   // CONSTRUCTION //
   //////////////////
+
+  private opts: CascadeOpts;
 
   /**
    * TODO
@@ -103,8 +174,11 @@ export class Cascade<T = any> {
     private compute: (
       addDependency: (...dependencies: Cascade[]) => void
     ) => T | Promise<T>,
-    private opts: CascadeOpts = {}
+    { notify = "auto", autoclose = true, onClose }: CascadeOpts = {}
   ) {
+    this.opts = { notify, autoclose };
+    if (onClose) this.onClose(onClose);
+
     this.invalidate();
   }
 
@@ -112,16 +186,17 @@ export class Cascade<T = any> {
   // CLOSING //
   /////////////
 
-  // Handle closing `this`, unlinking all handles and 
+  // Handle closing `this`, unlinking all handles and
   // notifying any onClose listeners
 
   /**
    * TODO
-   * @param opts
    */
-  close(opts?: CloseOpts) {
-    this.handles.forEach((handle) => handle.close(opts));
+  close() {
+    if (this._isClosed) return;
+
     this._isClosed = true;
+    this.invHandles.forEach((handle) => handle.off());
     this.closeListenerManager.notify();
   }
 
@@ -130,7 +205,7 @@ export class Cascade<T = any> {
    * @param listener
    * @returns
    */
-  onClose(listener: () => void) {
+  onClose(listener: Listener) {
     return this.closeListenerManager.addListener(listener);
   }
   private closeListenerManager = new ListenerManager();
@@ -147,7 +222,7 @@ export class Cascade<T = any> {
   // COMPUTATION //
   /////////////////
 
-  // Handle re-computation, piping, etc. 
+  // Handle re-computation, piping, etc.
 
   /**
    *
@@ -243,30 +318,32 @@ export class Cascade<T = any> {
    * TODO
    * @returns
    */
-  get(): Promise<T> {
+  get({ keepAlive = true }: { keepAlive?: boolean } = {}): Promise<T> {
     if (this.isValid) {
       const result = this.curError
         ? Promise.reject(this.curError)
         : Promise.resolve(this.curValue!);
 
+      if (!keepAlive && this.attachedListenerCount === 0) this.close();
+
       return result;
     }
 
-    return this.next();
+    return this.next({ keepAlive });
   }
 
   /**
    * TODO
    * @returns
    */
-  next(): Promise<T> {
+  next({ keepAlive = true }: { keepAlive?: boolean } = {}): Promise<T> {
     return new Promise((res, rej) => {
       const handle = this.listen(
         () => {
           if (this.curError) rej(this.curError);
           else res(this.curValue!);
 
-          handle.close();
+          handle.off({ keepAlive });
         },
         { detached: true }
       );
@@ -313,7 +390,9 @@ export class Cascade<T = any> {
    */
   static resolve<T>(value: T) {
     const awaited = new Cascade(() => value);
-    return new Cascade((deps) => Cascade.unwrap(awaited, deps));
+    const result = new Cascade((deps) => Cascade.unwrap(awaited, deps));
+
+    return result;
   }
 
   /**

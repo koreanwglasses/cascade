@@ -1,3 +1,5 @@
+import { Cascade } from "..";
+
 /**
  * TODO
  */
@@ -6,10 +8,14 @@ export class CascadeError extends Error {
 
   /**
    * TODO
-   * @param message 
-   * @param originalError 
+   * @param message
+   * @param originalError
    */
-  constructor(message: string, readonly originalError?: Error) {
-    super(message);
+  constructor(
+    readonly cascade: Cascade | null,
+    message: string,
+    readonly originalError?: Error
+  ) {
+    super(`${message}\n${cascade?.debugInfo?.roots ?? ""}`.trim());
   }
 }

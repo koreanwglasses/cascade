@@ -5,12 +5,16 @@ import { Cascade } from "..";
  */
 export type CascadeOpts = {
   notify?: "auto" | "never" | "always";
+  autoclose?: boolean;
+  onClose?: () => void;
 };
 
 /**
  * TODO
  */
-export type CloseOpts = { keepAlive?: boolean };
+export type CloseOpts = {
+  keepAlive?: boolean;
+};
 
 /**
  * TODO

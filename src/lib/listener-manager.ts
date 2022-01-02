@@ -1,26 +1,31 @@
-export type Listener = () => void;
+export type Listener<ListenerArgs extends unknown[] = []> = (
+  ...args: ListenerArgs
+) => void;
 
 export type ListenerHandle<CloseArgs extends unknown[] = []> = {
-  close(...args: CloseArgs): void;
+  off(...args: CloseArgs): void;
 };
 
-export class ListenerManager<CloseArgs extends unknown[] = []> {
-  private listeners = new Set<Listener>();
+export class ListenerManager<
+  ListenerArgs extends unknown[] = [],
+  CloseArgs extends unknown[] = []
+> {
+  private listeners = new Set<Listener<ListenerArgs>>();
 
   addListener(
-    listener: Listener,
-    onClose?: (...args: CloseArgs) => void
+    listener: Listener<ListenerArgs>,
+    onRemoveListener?: (...args: CloseArgs) => void
   ): ListenerHandle<CloseArgs> {
     this.listeners.add(listener);
     return {
-      close: (...args: CloseArgs) => {
+      off: (...args: CloseArgs) => {
         this.listeners.delete(listener);
-        onClose?.(...args);
+        onRemoveListener?.(...args);
       },
     };
   }
 
-  notify() {
-    [...this.listeners].forEach((listener) => listener());
+  notify(...args: ListenerArgs) {
+    [...this.listeners].forEach((listener) => listener(...args));
   }
 }

@@ -16,6 +16,6 @@ export class CascadeError extends Error {
     message: string,
     readonly originalError?: Error
   ) {
-    super(`${message}\n${cascade?.debugInfo?.roots ?? ""}`.trim());
+    super(`${message}\n${cascade?.debugInfo?.trace ?? ""}`.trim());
   }
 }

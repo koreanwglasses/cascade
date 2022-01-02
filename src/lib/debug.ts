@@ -10,6 +10,8 @@ export const enableDebugging = () => {
 
 /** @internal */
 export class DebugInfo {
+  constructor(private cascade: Cascade) {}
+
   readonly declaredAt = getUserStackFrame();
 
   private dependencies?: (DebugInfo | undefined)[];
@@ -30,38 +32,51 @@ export class DebugInfo {
     return rootsInfo;
   }
 
-  get roots() {
-    const maxItems = 10;
+  get trace() {
+    type Root = { declaredAt: string[]; num: number; numClosed: number };
+    const roots = new Map<string, Root>();
+    this.getRootsInfo().forEach((info) => {
+      const key = info.declaredAt?.join() ?? "UNKNOWN";
 
-    const rootsInfo = this.getRootsInfo().filter(
-      (info) => info.declaredAt?.length
-    );
+      if (roots.has(key)) {
+        const root = roots.get(key)!;
+        root.num++;
+        if (info.cascade.isClosed) root.numClosed++;
+      } else {
+        roots.set(key, {
+          declaredAt: info.declaredAt ?? ["<unknown>"],
+          num: 1,
+          numClosed: info.cascade.isClosed ? 1 : 0,
+        });
+      }
+    });
 
-    const printInfo = (info: DebugInfo) =>
-      info.declaredAt
-        ?.map(
+    const printInfo = (root: Root) =>
+      root.declaredAt
+        .map(
           (line, i) =>
-            `${i === 0 ? "  - Cascade declared " : "    "}${line.trim()}\n`
+            `${
+              i === 0
+                ? `  - (${
+                    root.num > 1 ? `${root.numClosed}/${root.num} ` : ""
+                  }${
+                    root.numClosed || root.num > 1 ? "closed" : "open"
+                  }) Cascade declared `
+                : "    "
+            }${line.trim()}\n`
         )
         .join("");
 
-    let result = `Trace roots: \n`;
-
-    if (rootsInfo.length <= maxItems) {
-      result += rootsInfo.slice(1).map(printInfo).join("");
-    } else {
-      result +=
-        rootsInfo
-          .slice(1, 1 + maxItems / 2)
-          .map(printInfo)
-          .join("") +
-        `        ... omitting ${rootsInfo.length - maxItems} items ...\n` +
-        rootsInfo
-          .slice(-maxItems / 2)
-          .map(printInfo)
-          .join("");
-    }
-    return result;
+    return (
+      (this.declaredAt ?? ["<unknown>"])
+        .map((line, i) => `${i === 0 ? `Cascade declared ` : "    "}${line}\n`)
+        .join("") +
+      `Root dependencies:\n` +
+      [...roots.values()]
+        .sort((a, b) => b.num - a.num)
+        .map(printInfo)
+        .join("")
+    );
   }
 }
 

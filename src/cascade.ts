@@ -225,5 +225,10 @@ export class Cascade<T = any> {
     ) as Cascade<T>;
   }
 
+  toJSON() {
+    // Don't serialize Cascades
+    return {}
+  }
+
   declare static Adapter: typeof Adapter;
 }

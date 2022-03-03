@@ -125,7 +125,7 @@ export class Cascade<T = any> {
     try {
       res = await this.func();
     } catch (error) {
-      // Ignore the error if DEFER_RESULT is thrown
+      // Throw DEFER_RESULT to ignore a refresh
       if (error !== DEFER_RESULT) this.setState({ error });
       return;
     }
@@ -214,6 +214,43 @@ export class Cascade<T = any> {
       [this],
       opts
     );
+  }
+
+  // Skip refreshing on incremental changes in value
+  // that are unlikely to affect later computations
+  /** @experimental */
+  filter(cb: (value: T, prevValue: T) => boolean) {
+    let first = true;
+    let prevValue: T;
+    return this.chain((value) => {
+      if (first || cb(value, prevValue)) {
+        first = false;
+        prevValue = value;
+        return value;
+      } else {
+        throw DEFER_RESULT;
+      }
+    });
+  }
+
+  // Limit the rate at which changes in value are reported
+  /** @experimental */
+  throttle(delay: number) {
+    let lastReport = 0;
+    let timeout: any;
+    const cascade = this.filter(() => {
+      clearTimeout(timeout);
+      const t = +new Date();
+      if (t - lastReport >= delay) {
+        lastReport = t;
+        return true;
+      } else {
+        timeout = setTimeout(() => cascade.refresh(), delay - (t - lastReport));
+        return false;
+      }
+    });
+    cascade.options.onDetach = () => clearTimeout(timeout);
+    return cascade;
   }
 
   static all<T extends readonly [...unknown[]]>(cascades: {

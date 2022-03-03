@@ -1,13 +1,12 @@
 import { DEFER_RESULT } from ".";
 import { Adapter } from "./adapter";
-import { Warning } from "./lib/errors";
 import { hash } from "./lib/hash";
 import { ListenerControls, ListenerManager } from "./lib/listener-manager";
 
 export type Resolvable<T> = Promise<Cascade<T>> | Promise<T> | Cascade<T> | T;
 
 export type Options = {
-  onClose?(): void;
+  onDetach?(): void;
   _debug_logListenerCount?: boolean | string;
   _debug_logChange?: boolean | string;
 };
@@ -24,44 +23,66 @@ export class Cascade<T = any> {
     private deps: Cascade[] = [],
     readonly options: Options = {}
   ) {
-    this.open();
+    this.attach();
   }
 
   private dependencyHandles?: ListenerControls[];
-  private isOpen = false;
+  private isAttached = false;
   // Hook listeners and do an initial refresh
-  private open() {
+  private attach() {
+    if (this.isClosed) throw new Error("Cannot attach closed Cascade");
+
     if (!this.dependencyHandles) {
       this.dependencyHandles = this.deps.map((dep) =>
         dep.onChange(() => this.refresh())
       );
     }
-    if (!this.state.isValid) this.refresh();
-    this.isOpen = true;
-  }
-
-  // Remove listeners when closed, allowing for GC if neccessary
-  close() {
-    if (this.listeners.size) {
-      // If there are still listeners, notify them with an error
-      this.setState({
-        error: new Warning(
-          "Cascade closed while at least one listener still attached"
-        ),
+    if (!this.listenerRemovedHandle) {
+      this.listenerRemovedHandle = this.listeners.onListenerRemove(() => {
+        this._debug_logListenerCount();
+        // Detach if nothing is listening to this Cascade
+        if (this.listeners.size === 0) this.detach();
       });
     }
+    if (!this.state.isValid) this.refresh();
+    this.isAttached = true;
+  }
+
+  // Detach all listeners, allowing this Cascade to be GC'ed
+  // if neccessary
+  private detach() {
+    if (!this.isAttached) return;
 
     this.state.isValid = false;
 
     this.dependencyHandles?.forEach((handle) => handle.detach());
     this.dependencyHandles = undefined;
 
+    this.listenerRemovedHandle?.detach();
+    this.listenerRemovedHandle = undefined;
+
     this.mirrorSourceHandle?.detach();
     this.mirrorSourceHandle = undefined;
 
-    this.isOpen = false;
+    this.isAttached = false;
 
-    this.options.onClose?.();
+    this.options.onDetach?.();
+  }
+
+  // Close cascade and prevent any further use
+  // Used to mark permanently invalid Cascades
+  // e.g. after a cleanup routine in onDetach
+  private isClosed = false;
+  close() {
+    if (this.isClosed) return;
+
+    this.detach();
+
+    this.setState({
+      error: new Error("Cascade closed"),
+    });
+
+    this.isClosed = true;
   }
 
   /**
@@ -69,6 +90,8 @@ export class Cascade<T = any> {
    * the hash is already computed
    */
   private setState(_state: State<T>, _hash?: string) {
+    if (this.isClosed) throw new Error("Cannot set state on closed Cascade");
+
     const state =
       "error" in _state ? { error: _state.error } : { value: _state.value };
 
@@ -89,6 +112,8 @@ export class Cascade<T = any> {
 
   private mirrorSourceHandle?: ListenerControls;
   async refresh() {
+    if (this.isClosed) throw new Error("Cannot refresh closed Cascade");
+
     // Mark state as invalid
     this.state.isValid = false;
 
@@ -125,18 +150,15 @@ export class Cascade<T = any> {
   }
 
   private listeners = new ListenerManager<[State<T>, string?]>();
+  private listenerRemovedHandle?: ListenerControls;
   private onChange(cb: (state: State<T>, hash?: string) => void) {
+    if (this.isClosed) throw new Error("Cannot add listener to closed Cascade");
+
     // Reopen automatically when a new listener is added
-    if (!this.isOpen) this.open();
+    if (!this.isAttached) this.attach();
 
-    const retval = this.listeners.addListener(cb, () => {
-      // Close when no listeners remain, allowing GC if neccessary
-      this._debug_logListenerCount();
-      if (this.listeners.size === 0) this.close();
-    });
-
+    const retval = this.listeners.addListener(cb);
     this._debug_logListenerCount();
-
     return retval;
   }
 
@@ -165,6 +187,8 @@ export class Cascade<T = any> {
   }
 
   chain<S>(func: (value: T) => Resolvable<S>, opts?: Options): Cascade<S> {
+    if (this.isClosed) throw new Error("Cannot chain from closed Cascade");
+
     return new Cascade(
       () => {
         if (!this.state.isValid) throw DEFER_RESULT;
@@ -180,6 +204,8 @@ export class Cascade<T = any> {
     func: (error: any) => Resolvable<S | undefined>,
     opts?: Options
   ): Cascade<S | undefined> {
+    if (this.isClosed) throw new Error("Cannot catch from closed Cascade");
+
     return new Cascade(
       () => {
         if (!this.state.isValid) throw DEFER_RESULT;

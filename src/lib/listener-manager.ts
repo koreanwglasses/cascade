@@ -7,22 +7,25 @@ export type ListenerControls = {
   pause(): void;
 };
 
-export class ListenerManager<ListenerArgs extends unknown[] = []> {
+class PrimitiveListenerManager<ListenerArgs extends unknown[] = []> {
   private listeners = new Set<{
     cb: Listener<ListenerArgs>;
     isPaused: boolean;
   }>();
 
-  addListener(
-    cb: Listener<ListenerArgs>,
-    onRemoveListener?: () => void
-  ): ListenerControls {
+  protected removeListener(l: {
+    cb: Listener<ListenerArgs>;
+    isPaused: boolean;
+  }) {
+    return this.listeners.delete(l);
+  }
+
+  addListener(cb: Listener<ListenerArgs>): ListenerControls {
     const l = { cb, isPaused: false };
     this.listeners.add(l);
     return {
       detach: () => {
-        this.listeners.delete(l);
-        onRemoveListener?.();
+        this.removeListener(l);
       },
       pause: () => {
         l.isPaused = true;
@@ -38,5 +41,23 @@ export class ListenerManager<ListenerArgs extends unknown[] = []> {
 
   get size() {
     return this.listeners.size;
+  }
+}
+
+export class ListenerManager<
+  ListenerArgs extends unknown[] = []
+> extends PrimitiveListenerManager<ListenerArgs> {
+  private removeListenerManager = new PrimitiveListenerManager();
+  onListenerRemove(cb: Listener) {
+    return this.removeListenerManager.addListener(cb);
+  }
+
+  protected removeListener(l: {
+    cb: Listener<ListenerArgs>;
+    isPaused: boolean;
+  }): boolean {
+    const retval = super.removeListener(l);
+    if (retval) this.removeListenerManager.notify();
+    return retval;
   }
 }

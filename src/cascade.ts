@@ -219,7 +219,7 @@ export class Cascade<T = any> {
   // Skip refreshing on incremental changes in value
   // that are unlikely to affect later computations
   /** @experimental */
-  filter(cb: (value: T, prevValue: T) => boolean) {
+  _exp_filter(cb: (value: T, prevValue: T) => boolean) {
     let first = true;
     let prevValue: T;
     return this.chain((value) => {
@@ -235,10 +235,10 @@ export class Cascade<T = any> {
 
   // Limit the rate at which changes in value are reported
   /** @experimental */
-  throttle(delay: number) {
+  _exp_throttle(delay: number) {
     let lastReport = 0;
     let timeout: any;
-    const cascade = this.filter(() => {
+    const cascade = this._exp_filter(() => {
       clearTimeout(timeout);
       const t = +new Date();
       if (t - lastReport >= delay) {
@@ -253,13 +253,63 @@ export class Cascade<T = any> {
     return cascade;
   }
 
+  // Recursively make Cascade and its properties
+  // into a single Cascade
+  /** @experimental */
+  _exp_deep() {
+    const flatten = (value: unknown): Cascade<unknown> => {
+      if (value instanceof Promise) {
+        return flatten(new Cascade(() => value));
+      } else if (value instanceof Cascade) {
+        return value.chain(flatten);
+      } else if (
+        value &&
+        (typeof value === "object" || typeof value === "function")
+      ) {
+        return Cascade.all(Object.values(value).map(flatten)).chain((values) =>
+          Object.fromEntries(
+            Object.keys(value).map((key, i) => [key, values[i]])
+          )
+        ) as Cascade<unknown>;
+      } else {
+        return new Cascade(() => value);
+      }
+    };
+
+    type Deep<T> = T extends Promise<infer S>
+      ? Deep<S>
+      : T extends Cascade<infer S>
+      ? Deep<S>
+      : T extends null | undefined | number | string | Symbol | boolean
+      ? T
+      : { [K in keyof T]: Deep<T[K]> };
+
+    return flatten(this) as Cascade<Deep<T>>;
+  }
+
   static all<T extends readonly [...unknown[]]>(cascades: {
     [K in keyof T]: Cascade<T[K]>;
   }) {
-    return cascades.reduce<Cascade>(
-      (a, b) => a.chain((ax) => b.chain((bx) => [...ax, bx])),
-      new Cascade(() => [])
-    ) as Cascade<T>;
+    return new Cascade(() => {
+      // Defer if any are not yet valid
+      const invalid = cascades.find((cascade) => !cascade.state.isValid);
+      if (invalid) throw DEFER_RESULT;
+
+      // Throw an error if any of them have errored
+      const rejected = cascades.find((cascade) => "error" in cascade.state);
+      if (rejected) {
+        if (!("error" in rejected.state))
+          throw new Error("Unexpected condition");
+        throw rejected.state.error;
+      }
+
+      // Return list of all computed values
+      return cascades.map((cascade) => {
+        if (!("value" in cascade.state))
+          throw new Error("Unexpected condition");
+        return cascade.state.value;
+      }) as unknown as readonly [...T];
+    }, [...cascades]);
   }
 
   toJSON() {

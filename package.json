@@ -1,19 +1,17 @@
 {
   "name": "@koreanwglasses/cascade",
-  "version": "0.9.2",
+  "version": "0.10.0",
   "packageManager": "yarn@3.1.1",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist",
-    "debug"
+    "dist"
   ],
   "scripts": {
     "prepare": "$npm_execpath run build",
     "build": "rm -rf dist && tsc"
   },
   "devDependencies": {
-    "@types/deep-equal": "^1.0.1",
     "@types/node": "^16.11.11",
     "@types/object-hash": "^2.2.1",
     "tsc": "^2.0.3",

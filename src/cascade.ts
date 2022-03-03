@@ -5,35 +5,24 @@ import { ListenerControls, ListenerManager } from "./lib/listener-manager";
 
 export type Resolvable<T> = Promise<Cascade<T>> | Promise<T> | Cascade<T> | T;
 
-type State<T> = { value: T } | { error: any };
-
 export type Options = {
   onClose?(): void;
   _debug_logListenerCount?: boolean | string;
   _debug_logChange?: boolean | string;
 };
 
+type State<T> = { value: T } | { error: any };
+
 export class Cascade<T = any> {
   private state: ((State<T> & { isValid: true }) | { isValid: false }) & {
     hash?: string;
   } = { isValid: false };
 
-  readonly options: Options;
-  private deps: Cascade[];
-  constructor(func: () => Resolvable<T>, ...deps: Cascade[]);
-  constructor(func: () => Resolvable<T>, opts: Options, ...deps: Cascade[]);
   constructor(
     private func: () => Resolvable<T>,
-    dep0_opts: Options | Cascade,
-    ...deps: Cascade[]
+    private deps: Cascade[] = [],
+    readonly options: Options = {}
   ) {
-    if (dep0_opts instanceof Cascade) {
-      this.options = {};
-      this.deps = [dep0_opts, ...deps];
-    } else {
-      this.options = dep0_opts ?? {};
-      this.deps = deps;
-    }
     this.open();
   }
 
@@ -173,25 +162,30 @@ export class Cascade<T = any> {
     }
   }
 
-  chain<S>(func: (value: T) => Resolvable<S>, opts: Options = {}): Cascade<S> {
+  chain<S>(func: (value: T) => Resolvable<S>, opts?: Options): Cascade<S> {
     return new Cascade(
       () => {
         if (!this.state.isValid) throw DEFER_RESULT;
         if ("error" in this.state) throw this.state.error;
         return func(this.state.value);
       },
-      opts,
-      this
+      [this],
+      opts
     );
   }
 
   catch<S>(
-    func: (error: any) => Resolvable<S | undefined>
+    func: (error: any) => Resolvable<S | undefined>,
+    opts?: Options
   ): Cascade<S | undefined> {
-    return new Cascade(() => {
-      if (!this.state.isValid) throw DEFER_RESULT;
-      if ("error" in this.state) return func(this.state.error);
-    }, this);
+    return new Cascade(
+      () => {
+        if (!this.state.isValid) throw DEFER_RESULT;
+        if ("error" in this.state) return func(this.state.error);
+      },
+      [this],
+      opts
+    );
   }
 
   static all<T extends readonly [...unknown[]]>(cascades: {
@@ -202,4 +196,39 @@ export class Cascade<T = any> {
       new Cascade(() => [])
     ) as Cascade<T>;
   }
+
+  declare static Adapter: typeof Adapter;
 }
+
+class Adapter<T = any> extends Cascade<T> {
+  private managedState: (State<T> & { isValid: true }) | { isValid: false } = {
+    isValid: false,
+  };
+  constructor(opts?: Options) {
+    super(
+      () => {
+        if (!this.managedState.isValid) throw DEFER_RESULT;
+        if ("error" in this.managedState) throw this.managedState.error;
+        return this.managedState.value;
+      },
+      [],
+      opts
+    );
+  }
+
+  unset() {
+    this.managedState.isValid = false;
+  }
+
+  setValue(value: T) {
+    this.managedState = { value, isValid: true };
+    this.refresh();
+  }
+
+  setError(error: any) {
+    this.managedState = { error, isValid: true };
+    this.refresh();
+  }
+}
+
+Cascade.Adapter = Adapter;

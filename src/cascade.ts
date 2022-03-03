@@ -226,8 +226,7 @@ export class Cascade<T = any> {
   }
 
   toJSON() {
-    // Don't serialize Cascades
-    return {}
+    return { ...this.state, hash: undefined };
   }
 
   declare static Adapter: typeof Adapter;

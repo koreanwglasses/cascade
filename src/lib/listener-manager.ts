@@ -2,30 +2,41 @@ export type Listener<ListenerArgs extends unknown[] = []> = (
   ...args: ListenerArgs
 ) => void;
 
-export type ListenerHandle<CloseArgs extends unknown[] = []> = {
-  off(...args: CloseArgs): void;
+export type ListenerControls = {
+  stop(): void;
+  pause(): void;
 };
 
-export class ListenerManager<
-  ListenerArgs extends unknown[] = [],
-  CloseArgs extends unknown[] = []
-> {
-  private listeners = new Set<Listener<ListenerArgs>>();
+export class ListenerManager<ListenerArgs extends unknown[] = []> {
+  private listeners = new Set<{
+    cb: Listener<ListenerArgs>;
+    isPaused: boolean;
+  }>();
 
   addListener(
-    listener: Listener<ListenerArgs>,
-    onRemoveListener?: (...args: CloseArgs) => void
-  ): ListenerHandle<CloseArgs> {
-    this.listeners.add(listener);
+    cb: Listener<ListenerArgs>,
+    onRemoveListener?: () => void
+  ): ListenerControls {
+    const l = { cb, isPaused: false };
+    this.listeners.add(l);
     return {
-      off: (...args: CloseArgs) => {
-        this.listeners.delete(listener);
-        onRemoveListener?.(...args);
+      stop: () => {
+        this.listeners.delete(l);
+        onRemoveListener?.();
+      },
+      pause: () => {
+        l.isPaused = true;
       },
     };
   }
 
   notify(...args: ListenerArgs) {
-    [...this.listeners].forEach((listener) => listener(...args));
+    [...this.listeners].forEach((listener) => {
+      if (!listener.isPaused) listener.cb(...args);
+    });
+  }
+
+  get size() {
+    return this.listeners.size;
   }
 }

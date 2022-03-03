@@ -15,14 +15,14 @@ export class Managed<T = any> extends Cascade<T> {
       );
     });
 
-    if (typeof initialValue !== "undefined") this.value(initialValue);
+    if (typeof initialValue !== "undefined") this.set(initialValue);
   }
 
   /**
    * TODO
    * @param value 
    */
-  value(value: T) {
+  set(value: T) {
     this.report(null, value);
   }
 

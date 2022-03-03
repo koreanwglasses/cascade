@@ -1,412 +1,205 @@
-import {
-  Compute,
-  CloseOpts,
-  CascadeOpts,
-  Unwrapped,
-  AllUnwrapped,
-  CascadeError,
-} from ".";
-import {
-  Listener,
-  ListenerHandle,
-  ListenerManager,
-} from "./lib/listener-manager";
-import { DEFER_RESULT } from "./lib/consts";
-import { DebugInfo, isDebuggingEnabled } from "./lib/debug";
-import objectHash from "object-hash";
+import { DEFER_RESULT } from ".";
+import { Warning } from "./lib/errors";
+import { hash } from "./lib/hash";
+import { ListenerControls, ListenerManager } from "./lib/listener-manager";
 
-/**
- * TODO
- */
+export type Resolvable<T> = Promise<Cascade<T>> | Promise<T> | Cascade<T> | T;
+
+type State<T> = { value: T } | { error: any };
+
+export type Options = {
+  onClose?(): void;
+  _debug_logListenerCount?: boolean | string;
+  _debug_logChange?: boolean | string;
+};
+
 export class Cascade<T = any> {
-  /** @internal */
-  debugInfo?: DebugInfo = isDebuggingEnabled ? new DebugInfo(this) : undefined;
+  private state: ((State<T> & { isValid: true }) | { isValid: false }) & {
+    hash?: string;
+  } = { isValid: false };
 
-  ///////////////
-  // LISTENERS //
-  ///////////////
-
-  // Manage listeners from Cascades that depend on `this`
-
-  private updateListeners = new ListenerManager<[], [opts?: CloseOpts]>();
-  private attachedListenerCount = 0;
-
-  private onUpdate(
-    listener: Listener,
-    { detached = false }: { detached?: boolean } = {}
-  ) {
-    if (this.isClosed)
-      throw new CascadeError(
-        this,
-        "Attempted to add listener to closed cascade"
-      );
-
-    if (!detached) this.attachedListenerCount++;
-
-    return this.updateListeners.addListener(
-      listener,
-      ({ keepAlive = false } = {}) => {
-        if (!detached) this.attachedListenerCount--;
-        if (
-          this.opts.autoclose &&
-          !keepAlive &&
-          this.attachedListenerCount <= 0
-        )
-          this.close();
-      }
-    );
-  }
-
-  ///////////////
-  // REPORTING //
-  ///////////////
-
-  // Handle reporting new values/errors and notifying listeners
-
-  protected isValid = false;
-  private curValue?: T;
-  private curError?: any;
-
-  private prevHash?: { value: any; error: any };
-
-  protected report(error: any, value?: T) {
-    this.curError = error;
-    this.curValue = value;
-    this.isValid = true;
-
-    if (this.opts.notify === "never") return;
-    if (this.opts.notify === "always") return this.updateListeners.notify();
-    // this.opts.notify === "auto"
-
-    // Notify dependents on change
-    let errorHash: any;
-    let valueHash: any;
-    try {
-      errorHash = this.hash(error);
-      valueHash = this.hash(value);
-    } catch (e) {
-      // If value could not be hashed, we'll just forward
-      // any updates allowing downstream cascades to
-      // check for changes
-      return this.updateListeners.notify();
-    }
-
-    const shouldNotify =
-      !this.prevHash ||
-      (error
-        ? this.prevHash.error !== errorHash
-        : this.prevHash.value !== valueHash);
-
-    this.prevHash = { value: valueHash, error: errorHash };
-
-    if (shouldNotify) this.updateListeners.notify();
-  }
-
-  /**
-   * Use hashes to track changes. This is helpful for checking
-   * if the contents of an object have changed, even if its
-   * the same object reference.
-   *
-   * TODO: Hashes have a small chance of collision, i.e. a small
-   * chance that a change to an object will go undetected.
-   * Address this?
-   */
-  private hash(value: any) {
-    if (value && (typeof value === "function" || typeof value === "object")) {
-      try {
-        return objectHash(value);
-      } catch (e) {
-        throw new CascadeError(
-          this,
-          "Error encountered while hashing incoming value",
-          e as Error
-        );
-      }
-    } else {
-      return value;
-    }
-  }
-
-  /////////////
-  // HANDLES //
-  /////////////
-
-  // Keep track of handles from Cascades `this` is listening to
-
-  private updateHandles: ListenerHandle[] = [];
-  private closeHandles: ListenerHandle[] = [];
-
-  private updateDependencies(dependencies: Set<Cascade>) {
-    this.debugInfo?.setDependencies([...dependencies]);
-
-    // Remove listeners to onClose first, so when we
-    // remove the regular listeners, this cascade doesn't close
-    this.closeHandles.forEach((handle) => handle.off());
-
-    // Close if any dependency closes
-    this.closeHandles = [...dependencies].map((dep) =>
-      dep.onClose(() => this.close())
-    );
-
-    // Invalidate if any dependencies update
-    const updateHandles = [...dependencies].map((dep) =>
-      dep.onUpdate(() => this.invalidate())
-    );
-
-    // Remove existing listeners after setting new ones
-    // to ensure no dependency prematurely closes
-    this.updateHandles.forEach((handle) => handle.off());
-    this.updateHandles = updateHandles;
-  }
-
-  //////////////////
-  // CONSTRUCTION //
-  //////////////////
-
-  private opts: CascadeOpts;
-
-  /**
-   * TODO
-   * @param compute
-   * @param opts
-   */
+  readonly options: Options;
+  private deps: Cascade[];
+  constructor(func: () => Resolvable<T>, ...deps: Cascade[]);
+  constructor(func: () => Resolvable<T>, opts: Options, ...deps: Cascade[]);
   constructor(
-    private compute: (
-      addDependency: (...dependencies: Cascade[]) => void
-    ) => T | Promise<T>,
-    { notify = "auto", autoclose = true, onClose }: CascadeOpts = {}
+    private func: () => Resolvable<T>,
+    dep0_opts: Options | Cascade,
+    ...deps: Cascade[]
   ) {
-    this.opts = { notify, autoclose };
-    if (onClose) this.onClose(onClose);
-
-    this.invalidate();
-  }
-
-  /////////////
-  // CLOSING //
-  /////////////
-
-  // Handle closing `this`, unlinking all handles and
-  // notifying any onClose listeners
-
-  /**
-   * TODO
-   */
-  close() {
-    if (this._isClosed) return;
-    this._isClosed = true;
-
-    this.updateHandles.forEach((handle) => handle.off());
-    this.closeListeners.notify();
-  }
-
-  /**
-   * TODO
-   * @param listener
-   * @returns
-   */
-  onClose(listener: Listener) {
-    return this.closeListeners.addListener(listener);
-  }
-  private closeListeners = new ListenerManager();
-
-  /**
-   * TODO
-   */
-  get isClosed() {
-    return this._isClosed;
-  }
-  private _isClosed = false;
-
-  /////////////////
-  // COMPUTATION //
-  /////////////////
-
-  // Handle re-computation, piping, etc.
-
-  /**
-   *
-   */
-  async invalidate() {
-    this.isValid = false;
-
-    const dependencies = new Set<Cascade>();
-    const addDependencies = (...newDependencies: Cascade[]) =>
-      newDependencies.forEach((dependency) => dependencies.add(dependency));
-
-    try {
-      this.report(null, await this.compute(addDependencies));
-    } catch (e) {
-      if (e !== DEFER_RESULT) this.report(e, undefined);
-    } finally {
-      this.updateDependencies(dependencies);
-    }
-  }
-
-  /**
-   * TODO
-   * @param compute
-   * @param opts
-   * @returns
-   */
-  pipe<S>(compute: Compute<S, T>, opts?: CascadeOpts): Cascade<Unwrapped<S>> {
-    const computed = new Cascade(
-      (deps) => compute(Cascade.unwrap(this, deps) as T, deps),
-      { notify: "always" }
-    );
-
-    const result = new Cascade((deps) => Cascade.unwrap(computed, deps), opts);
-
-    return new Proxy(result, {
-      get(target, p, receiver) {
-        if (p === "invalidate") return () => computed.invalidate();
-        return Reflect.get(target, p, receiver);
-      },
-    });
-  }
-
-  /**
-   * TODO
-   * @param compute
-   * @param opts
-   * @returns
-   */
-  pipeAll<S extends readonly [...any[]]>(
-    compute: Compute<S, T>,
-    opts?: CascadeOpts
-  ) {
-    return this.pipe(
-      (value, deps) => Cascade.all(compute(value, deps)),
-      opts
-    ) as Cascade<AllUnwrapped<S>>;
-  }
-
-  /**
-   * TODO
-   * @param callback
-   * @returns
-   */
-  tap(callback: (value: T) => void) {
-    this.onUpdate(
-      () => {
-        if (this.curError) return;
-        else callback(this.curValue!);
-      },
-      { detached: true }
-    );
-
-    return this;
-  }
-
-  /**
-   * TODO
-   * @param handler
-   * @returns
-   */
-  catch<S>(handler: (error: any) => S) {
-    this.onUpdate(
-      () => {
-        if (this.curError) handler(this.curError);
-      },
-      { detached: true }
-    );
-
-    return this;
-  }
-
-  /**
-   * TODO
-   * @returns
-   */
-  get({ keepAlive = true }: { keepAlive?: boolean } = {}): Promise<T> {
-    if (this.isValid) {
-      const result = this.curError
-        ? Promise.reject(this.curError)
-        : Promise.resolve(this.curValue!);
-
-      if (!keepAlive && this.attachedListenerCount === 0) this.close();
-
-      return result;
-    }
-
-    return this.next({ keepAlive });
-  }
-
-  /**
-   * TODO
-   * @returns
-   */
-  next({ keepAlive = true }: { keepAlive?: boolean } = {}): Promise<T> {
-    return new Promise((res, rej) => {
-      const handle = this.onUpdate(
-        () => {
-          if (this.curError) rej(this.curError);
-          else res(this.curValue!);
-
-          handle.off({ keepAlive });
-        },
-        { detached: true }
-      );
-    });
-  }
-
-  ////////////////////
-  // STATIC METHODS //
-  ////////////////////
-
-  // Utility functions for Cascades
-
-  private static unwrap<T>(
-    value: T,
-    addDependency: (...dependencies: Cascade[]) => void
-  ): Unwrapped<T> {
-    if (value instanceof Cascade) {
-      addDependency(value);
-
-      if (!value.isValid) throw DEFER_RESULT;
-      if (value.curError) throw value.curError;
-
-      return Cascade.unwrap(value.curValue, addDependency);
+    if (dep0_opts instanceof Cascade) {
+      this.options = {};
+      this.deps = [dep0_opts, ...deps];
     } else {
-      return value as Unwrapped<T>;
+      this.options = dep0_opts ?? {};
+      this.deps = deps;
+    }
+    this.open();
+  }
+
+  private dependencyHandles?: ListenerControls[];
+  private isOpen = false;
+  // Hook listeners and do an initial refresh
+  private open() {
+    if (!this.dependencyHandles) {
+      this.dependencyHandles = this.deps.map((dep) =>
+        dep.onChange(() => this.refresh())
+      );
+    }
+    if (!this.state.isValid) this.refresh();
+    this.isOpen = true;
+  }
+
+  // Remove listeners when closed, allowing for GC if neccessary
+  close() {
+    if (this.listeners.size) {
+      // If there are still listeners, notify them with an error
+      this.setState({
+        error: new Warning(
+          "Cascade closed while at least one listener still attached"
+        ),
+      });
+    }
+
+    this.state.isValid = false;
+
+    this.dependencyHandles?.forEach((handle) => handle.stop());
+    this.dependencyHandles = undefined;
+
+    this.mirrorSourceHandle?.stop();
+    this.mirrorSourceHandle = undefined;
+
+    this.isOpen = false;
+
+    this.options.onClose?.();
+  }
+
+  /**
+   * @param _hash Used when forwarding state from another Cascade and
+   * the hash is already computed
+   */
+  private setState(_state: State<T>, _hash?: string) {
+    const state =
+      "error" in _state ? { error: _state.error } : { value: _state.value };
+
+    const prevHash = this.state.hash;
+    const newHash = _hash ?? hash(state);
+
+    this.state = {
+      ...state,
+      isValid: true,
+      hash: newHash,
+    };
+
+    if (newHash !== prevHash) {
+      this._debug_logChange();
+      this.listeners.notify(state, newHash);
     }
   }
 
-  /**
-   * TODO
-   * @param error
-   * @returns
-   */
-  static reject(error: any) {
-    return new Cascade(() => {
-      throw error;
+  private mirrorSourceHandle?: ListenerControls;
+  async refresh() {
+    // Mark state as invalid
+    this.state.isValid = false;
+
+    // Pause listening for changes on a mirror source Cascade, if exists
+    this.mirrorSourceHandle?.pause();
+
+    // Recompute state
+    let res: Resolvable<T>;
+    try {
+      res = await this.func();
+    } catch (error) {
+      // Ignore the error if DEFER_RESULT is thrown
+      if (error !== DEFER_RESULT) this.setState({ error });
+      return;
+    }
+
+    // Stop listening for changes on a mirror source Cascade, if exists
+    this.mirrorSourceHandle?.stop();
+    this.mirrorSourceHandle = undefined;
+
+    // Update state
+    if (res instanceof Cascade) {
+      // If res is a Cascade, mirror its state
+      // (Note: the Cascade is mirrored rather than referenced so that
+      // this Cascade can independently listen for changes to state)
+      if (res.state.isValid) this.setState(res.state, res.state.hash);
+      this.mirrorSourceHandle = res.onChange((state, hash) =>
+        this.setState(state, hash)
+      );
+    } else {
+      this.setState({ value: res });
+    }
+  }
+
+  private listeners = new ListenerManager<[State<T>, string?]>();
+  private onChange(cb: (state: State<T>, hash?: string) => void) {
+    // Reopen automatically when a new listener is added
+    if (!this.isOpen) this.open();
+
+    const retval = this.listeners.addListener(cb, () => {
+      // Close when no listeners remain, allowing GC if neccessary
+      this._debug_logListenerCount();
+      if (this.listeners.size === 0) this.close();
     });
+
+    this._debug_logListenerCount();
+
+    return retval;
   }
 
-  /**
-   * TODO
-   * @param value
-   * @returns
-   */
-  static resolve<T>(value: T) {
-    const awaited = new Cascade(() => value);
-    const result = new Cascade((deps) => Cascade.unwrap(awaited, deps));
-
-    return result;
+  private _debug_logChange() {
+    if (this.options._debug_logChange) {
+      console.log(
+        `${
+          typeof this.options._debug_logChange === "string"
+            ? this.options._debug_logChange
+            : ""
+        }${JSON.stringify(this.state)}`
+      );
+    }
   }
 
-  /**
-   * TODO
-   * @param array
-   * @returns
-   */
-  static all<T extends readonly [...any[]]>(array: T) {
-    return array.reduce(
-      (result, item) =>
-        (result as Cascade<unknown[]>).pipe((array) =>
-          Cascade.resolve(item).pipe((value) => [...array, value])
-        ),
+  private _debug_logListenerCount() {
+    if (this.options._debug_logListenerCount) {
+      console.log(
+        `${
+          typeof this.options._debug_logListenerCount === "string"
+            ? this.options._debug_logListenerCount
+            : ""
+        }${this.listeners.size}`
+      );
+    }
+  }
+
+  chain<S>(func: (value: T) => Resolvable<S>, opts: Options = {}): Cascade<S> {
+    return new Cascade(
+      () => {
+        if (!this.state.isValid) throw DEFER_RESULT;
+        if ("error" in this.state) throw this.state.error;
+        return func(this.state.value);
+      },
+      opts,
+      this
+    );
+  }
+
+  catch<S>(
+    func: (error: any) => Resolvable<S | undefined>
+  ): Cascade<S | undefined> {
+    return new Cascade(() => {
+      if (!this.state.isValid) throw DEFER_RESULT;
+      if ("error" in this.state) return func(this.state.error);
+    }, this);
+  }
+
+  static all<T extends readonly [...unknown[]]>(cascades: {
+    [K in keyof T]: Cascade<T[K]>;
+  }) {
+    return cascades.reduce<Cascade>(
+      (a, b) => a.chain((ax) => b.chain((bx) => [...ax, bx])),
       new Cascade(() => [])
-    ) as Cascade<AllUnwrapped<T>>;
+    ) as Cascade<T>;
   }
 }

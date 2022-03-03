@@ -3,7 +3,7 @@ export type Listener<ListenerArgs extends unknown[] = []> = (
 ) => void;
 
 export type ListenerControls = {
-  stop(): void;
+  detach(): void;
   pause(): void;
 };
 
@@ -20,7 +20,7 @@ export class ListenerManager<ListenerArgs extends unknown[] = []> {
     const l = { cb, isPaused: false };
     this.listeners.add(l);
     return {
-      stop: () => {
+      detach: () => {
         this.listeners.delete(l);
         onRemoveListener?.();
       },

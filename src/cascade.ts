@@ -1,4 +1,5 @@
 import { DEFER_RESULT } from ".";
+import { Adapter } from "./adapter";
 import { Warning } from "./lib/errors";
 import { hash } from "./lib/hash";
 import { ListenerControls, ListenerManager } from "./lib/listener-manager";
@@ -11,7 +12,7 @@ export type Options = {
   _debug_logChange?: boolean | string;
 };
 
-type State<T> = { value: T } | { error: any };
+export type State<T> = { value: T } | { error: any };
 
 export class Cascade<T = any> {
   private state: ((State<T> & { isValid: true }) | { isValid: false }) & {
@@ -52,10 +53,10 @@ export class Cascade<T = any> {
 
     this.state.isValid = false;
 
-    this.dependencyHandles?.forEach((handle) => handle.stop());
+    this.dependencyHandles?.forEach((handle) => handle.detach());
     this.dependencyHandles = undefined;
 
-    this.mirrorSourceHandle?.stop();
+    this.mirrorSourceHandle?.detach();
     this.mirrorSourceHandle = undefined;
 
     this.isOpen = false;
@@ -104,9 +105,8 @@ export class Cascade<T = any> {
       return;
     }
 
-    // Stop listening for changes on a mirror source Cascade, if exists
-    this.mirrorSourceHandle?.stop();
-    this.mirrorSourceHandle = undefined;
+    // Detach listener after new listener is attached
+    const oldHandle = this.mirrorSourceHandle;
 
     // Update state
     if (res instanceof Cascade) {
@@ -120,6 +120,8 @@ export class Cascade<T = any> {
     } else {
       this.setState({ value: res });
     }
+
+    oldHandle?.detach();
   }
 
   private listeners = new ListenerManager<[State<T>, string?]>();
@@ -199,36 +201,3 @@ export class Cascade<T = any> {
 
   declare static Adapter: typeof Adapter;
 }
-
-class Adapter<T = any> extends Cascade<T> {
-  private managedState: (State<T> & { isValid: true }) | { isValid: false } = {
-    isValid: false,
-  };
-  constructor(opts?: Options) {
-    super(
-      () => {
-        if (!this.managedState.isValid) throw DEFER_RESULT;
-        if ("error" in this.managedState) throw this.managedState.error;
-        return this.managedState.value;
-      },
-      [],
-      opts
-    );
-  }
-
-  unset() {
-    this.managedState.isValid = false;
-  }
-
-  setValue(value: T) {
-    this.managedState = { value, isValid: true };
-    this.refresh();
-  }
-
-  setError(error: any) {
-    this.managedState = { error, isValid: true };
-    this.refresh();
-  }
-}
-
-Cascade.Adapter = Adapter;

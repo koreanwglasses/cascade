@@ -5,6 +5,7 @@ export class Adapter<T = any> extends Cascade<T> {
   private managedState: (State<T> & { isValid: true; }) | { isValid: false; } = {
     isValid: false,
   };
+  
   constructor(opts?: Options) {
     super(
       () => {

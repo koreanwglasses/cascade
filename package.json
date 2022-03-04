@@ -18,6 +18,8 @@
     "typescript": "^4.5.2"
   },
   "dependencies": {
-    "object-hash": "^2.2.0"
+    "@types/setimmediate": "^1.0.2",
+    "object-hash": "^2.2.0",
+    "setimmediate": "^1.0.5"
   }
 }

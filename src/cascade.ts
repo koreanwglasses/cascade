@@ -2,6 +2,7 @@ import { DEFER_RESULT } from ".";
 import { Adapter } from "./adapter";
 import { hash } from "./lib/hash";
 import { ListenerControls, ListenerManager } from "./lib/listener-manager";
+import "setimmediate";
 
 export type Resolvable<T> = Promise<Cascade<T>> | Promise<T> | Cascade<T> | T;
 
@@ -45,6 +46,7 @@ export class Cascade<T = any> {
       });
     }
     if (!this.state.isValid) this.refresh();
+
     this.isAttached = true;
   }
 
@@ -110,9 +112,39 @@ export class Cascade<T = any> {
     }
   }
 
+  // Ensure that multiple refreshes while the
+  // function is pending a resolve or reject
+  // dont cause multiple evaluations
+  private isPending = false;
+  private async eval() {
+    if (this.isPending)
+      throw new Error("Cannot eval while previous eval is pending");
+    this.isPending = true;
+
+    let result: { err: any } | { res: Awaited<T> | Cascade<T> };
+    try {
+      result = { res: await this.func() };
+    } catch (err) {
+      result = { err };
+    }
+
+    this.isPending = false;
+    return result;
+  }
+
   private mirrorSourceHandle?: ListenerControls;
-  async refresh() {
+  refresh() {
     if (this.isClosed) throw new Error("Cannot refresh closed Cascade");
+
+    // Ignore any requests to refresh while a refresh is pending
+    if (this.isPending) {
+      console.warn(
+        "Call to refresh() ignored while another refresh is pending"
+      );
+
+      // Return false to indicate that refresh request failed
+      return false;
+    }
 
     // Mark state as invalid
     this.state.isValid = false;
@@ -120,33 +152,39 @@ export class Cascade<T = any> {
     // Pause listening for changes on a mirror source Cascade, if exists
     this.mirrorSourceHandle?.pause();
 
-    // Recompute state
-    let res: Resolvable<T>;
-    try {
-      res = await this.func();
-    } catch (error) {
-      // Throw DEFER_RESULT to ignore a refresh
-      if (error !== DEFER_RESULT) this.setState({ error });
-      return;
-    }
+    // Recompute state on next event cycle
+    // This ensures that everything is initialized before
+    // doing the first eval
+    setImmediate(async () => {
+      const result = await this.eval();
+      if ("err" in result) {
+        // If DEFER_RESULT was thrown, ignore the response
+        if (result.err !== DEFER_RESULT) this.setState({ error: result.err });
+        return;
+      }
+      const res = result.res;
 
-    // Detach listener after new listener is attached
-    const oldHandle = this.mirrorSourceHandle;
+      // Detach listener after new listener is attached
+      const oldHandle = this.mirrorSourceHandle;
 
-    // Update state
-    if (res instanceof Cascade) {
-      // If res is a Cascade, mirror its state
-      // (Note: the Cascade is mirrored rather than referenced so that
-      // this Cascade can independently listen for changes to state)
-      if (res.state.isValid) this.setState(res.state, res.state.hash);
-      this.mirrorSourceHandle = res.onChange((state, hash) =>
-        this.setState(state, hash)
-      );
-    } else {
-      this.setState({ value: res });
-    }
+      // Update state
+      if (res instanceof Cascade) {
+        // If res is a Cascade, mirror its state
+        // (Note: the Cascade is mirrored rather than referenced so that
+        // this Cascade can independently listen for changes to state)
+        if (res.state.isValid) this.setState(res.state, res.state.hash);
+        this.mirrorSourceHandle = res.onChange((state, hash) =>
+          this.setState(state, hash)
+        );
+      } else {
+        this.setState({ value: res });
+      }
 
-    oldHandle?.detach();
+      oldHandle?.detach();
+    });
+
+    // Return true to indicate that refresh request succeeded
+    return true;
   }
 
   private listeners = new ListenerManager<[State<T>, string?]>();
@@ -200,20 +238,32 @@ export class Cascade<T = any> {
     );
   }
 
-  catch<S>(
-    func: (error: any) => Resolvable<S | undefined>,
-    opts?: Options
-  ): Cascade<S | undefined> {
+  catch(handler: (error: any) => T): Cascade<T> {
     if (this.isClosed) throw new Error("Cannot catch from closed Cascade");
 
-    return new Cascade(
-      () => {
-        if (!this.state.isValid) throw DEFER_RESULT;
-        if ("error" in this.state) return func(this.state.error);
-      },
-      [this],
-      opts
-    );
+    return new Cascade(() => {
+      if (!this.state.isValid) throw DEFER_RESULT;
+      if ("error" in this.state) return handler(this.state.error);
+      return this.state.value;
+    }, [this]);
+  }
+
+  // Return a promise that returns the current value or
+  // the next available value.
+  toPromise(): Promise<T> {
+    if (this.isClosed)
+      throw new Error("Cannot convert closed Cascade to promise");
+
+    return new Promise((res, rej) => {
+      if (!this.state.isValid) {
+        const handle = this.onChange((state) => {
+          if ("error" in state) rej(state.error);
+          else res(state.value);
+          handle.detach();
+        });
+      } else if ("error" in this.state) rej(this.state.error);
+      else res(this.state.value);
+    });
   }
 
   // Skip refreshing on incremental changes in value
@@ -258,19 +308,19 @@ export class Cascade<T = any> {
   /** @experimental */
   _exp_deep() {
     const flatten = (value: unknown): Cascade<unknown> => {
-      if (value instanceof Promise) {
-        return flatten(new Cascade(() => value));
-      } else if (value instanceof Cascade) {
+      if (value instanceof Cascade) {
         return value.chain(flatten);
       } else if (
         value &&
         (typeof value === "object" || typeof value === "function")
       ) {
-        return Cascade.all(Object.values(value).map(flatten)).chain((values) =>
-          Object.fromEntries(
-            Object.keys(value).map((key, i) => [key, values[i]])
-          )
-        ) as Cascade<unknown>;
+        return Cascade.all(Object.values(value))
+          .chain((values) => Cascade.all(values.map(flatten)))
+          .chain((values) =>
+            Object.fromEntries(
+              Object.keys(value).map((key, i) => [key, values[i]])
+            )
+          ) as Cascade<unknown>;
       } else {
         return new Cascade(() => value);
       }
@@ -287,16 +337,21 @@ export class Cascade<T = any> {
     return flatten(this) as Cascade<Deep<T>>;
   }
 
-  static all<T extends readonly [...unknown[]]>(cascades: {
-    [K in keyof T]: Cascade<T[K]>;
+  static resolve<T>(value: Resolvable<T>) {
+    return new Cascade(() => value);
+  }
+
+  static all<T extends readonly [...unknown[]]>(values: {
+    [K in keyof T]: Resolvable<T[K]>;
   }) {
+    const resolved = values.map(Cascade.resolve);
     return new Cascade(() => {
       // Defer if any are not yet valid
-      const invalid = cascades.find((cascade) => !cascade.state.isValid);
+      const invalid = resolved.find((cascade) => !cascade.state.isValid);
       if (invalid) throw DEFER_RESULT;
 
       // Throw an error if any of them have errored
-      const rejected = cascades.find((cascade) => "error" in cascade.state);
+      const rejected = resolved.find((cascade) => "error" in cascade.state);
       if (rejected) {
         if (!("error" in rejected.state))
           throw new Error("Unexpected condition");
@@ -304,15 +359,15 @@ export class Cascade<T = any> {
       }
 
       // Return list of all computed values
-      return cascades.map((cascade) => {
+      return resolved.map((cascade) => {
         if (!("value" in cascade.state))
           throw new Error("Unexpected condition");
         return cascade.state.value;
       }) as unknown as readonly [...T];
-    }, [...cascades]);
+    }, resolved);
   }
 
-  toJSON() {
+  protected toJSON() {
     return { ...this.state, hash: undefined };
   }
 

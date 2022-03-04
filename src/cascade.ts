@@ -15,10 +15,6 @@ export type Options = {
 export type State<T> = { value: T } | { error: any };
 
 export class Cascade<T = any> {
-  private state: ((State<T> & { isValid: true }) | { isValid: false }) & {
-    hash?: string;
-  } = { isValid: false };
-
   constructor(
     private func: () => Resolvable<T>,
     private deps: Cascade[] = [],
@@ -27,9 +23,10 @@ export class Cascade<T = any> {
     this.attach();
   }
 
-  private dependencyHandles?: ListenerControls[];
-  private isAttached = false;
   // Hook listeners and do an initial refresh
+  private dependencyHandles?: ListenerControls[];
+  private listenerRemovedHandle?: ListenerControls;
+  private isAttached = false;
   private attach() {
     if (this.isClosed) throw new Error("Cannot attach closed Cascade");
 
@@ -87,6 +84,10 @@ export class Cascade<T = any> {
     this.isClosed = true;
   }
 
+
+  private state: ((State<T> & { isValid: true }) | { isValid: false }) & {
+    hash?: string;
+  } = { isValid: false };
   /**
    * @param _hash Used when forwarding state from another Cascade and
    * the hash is already computed
@@ -188,7 +189,6 @@ export class Cascade<T = any> {
   }
 
   private listeners = new ListenerManager<[State<T>, string?]>();
-  private listenerRemovedHandle?: ListenerControls;
   private onChange(cb: (state: State<T>, hash?: string) => void) {
     if (this.isClosed) throw new Error("Cannot add listener to closed Cascade");
 

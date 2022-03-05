@@ -2,12 +2,12 @@ import { DEFER_RESULT } from ".";
 import { Adapter } from "./adapter";
 import { hash } from "./lib/hash";
 import { ListenerControls, ListenerManager } from "./lib/listener-manager";
-import "setimmediate";
 
 export type Resolvable<T> = Promise<Cascade<T>> | Promise<T> | Cascade<T> | T;
 
 export type Options = {
   onDetach?(): void;
+  detached?: boolean;
   _debug_logListenerCount?: boolean | string;
   _debug_logChange?: boolean | string;
 };
@@ -15,12 +15,28 @@ export type Options = {
 export type State<T> = { value: T } | { error: any };
 
 export class Cascade<T = any> {
+  readonly options: Options = {};
+  private deps: Cascade[];
+
+  constructor(func: () => Resolvable<T>, ...deps: Cascade[]);
+  constructor(
+    func: () => Resolvable<T>,
+    options: Options | undefined | null,
+    ...deps: Cascade[]
+  );
   constructor(
     private func: () => Resolvable<T>,
-    private deps: Cascade[] = [],
-    readonly options: Options = {}
+    arg1?: Options | Cascade | undefined | null,
+    ...arg2: Cascade[]
   ) {
-    this.attach();
+    if (arg1 instanceof Cascade) {
+      this.deps = [arg1, ...arg2];
+    } else {
+      this.deps = arg2;
+      if (arg1) this.options = arg1;
+    }
+
+    if (!this.options.detached) this.attach();
   }
 
   // Hook listeners and do an initial refresh
@@ -29,12 +45,15 @@ export class Cascade<T = any> {
   private isAttached = false;
   private attach() {
     if (this.isClosed) throw new Error("Cannot attach closed Cascade");
+    if (this.isAttached) return;
+    this.isAttached = true;
 
     if (!this.dependencyHandles) {
       this.dependencyHandles = this.deps.map((dep) =>
         dep.onChange(() => this.refresh())
       );
     }
+
     if (!this.listenerRemovedHandle) {
       this.listenerRemovedHandle = this.listeners.onListenerRemove(() => {
         this._debug_logListenerCount();
@@ -42,15 +61,15 @@ export class Cascade<T = any> {
         if (this.listeners.size === 0) this.detach();
       });
     }
-    if (!this.state.isValid) this.refresh();
 
-    this.isAttached = true;
+    if (!this.state.isValid && !this.isPending) this.refresh();
   }
 
   // Detach all listeners, allowing this Cascade to be GC'ed
   // if neccessary
   private detach() {
     if (!this.isAttached) return;
+    this.isAttached = false;
 
     this.state.isValid = false;
 
@@ -62,8 +81,6 @@ export class Cascade<T = any> {
 
     this.mirrorSourceHandle?.detach();
     this.mirrorSourceHandle = undefined;
-
-    this.isAttached = false;
 
     this.options.onDetach?.();
   }
@@ -83,7 +100,6 @@ export class Cascade<T = any> {
 
     this.isClosed = true;
   }
-
 
   private state: ((State<T> & { isValid: true }) | { isValid: false }) & {
     hash?: string;
@@ -117,24 +133,8 @@ export class Cascade<T = any> {
   // function is pending a resolve or reject
   // dont cause multiple evaluations
   private isPending = false;
-  private async eval() {
-    if (this.isPending)
-      throw new Error("Cannot eval while previous eval is pending");
-    this.isPending = true;
-
-    let result: { err: any } | { res: Awaited<T> | Cascade<T> };
-    try {
-      result = { res: await this.func() };
-    } catch (err) {
-      result = { err };
-    }
-
-    this.isPending = false;
-    return result;
-  }
-
   private mirrorSourceHandle?: ListenerControls;
-  refresh() {
+  async refresh() {
     if (this.isClosed) throw new Error("Cannot refresh closed Cascade");
 
     // Ignore any requests to refresh while a refresh is pending
@@ -142,10 +142,9 @@ export class Cascade<T = any> {
       console.warn(
         "Call to refresh() ignored while another refresh is pending"
       );
-
-      // Return false to indicate that refresh request failed
-      return false;
+      return;
     }
+    this.isPending = true;
 
     // Mark state as invalid
     this.state.isValid = false;
@@ -153,16 +152,18 @@ export class Cascade<T = any> {
     // Pause listening for changes on a mirror source Cascade, if exists
     this.mirrorSourceHandle?.pause();
 
-    // Recompute state on next event cycle
-    // This ensures that everything is initialized before
-    // doing the first eval
-    setImmediate(async () => {
-      const result = await this.eval();
-      if ("err" in result) {
-        // If DEFER_RESULT was thrown, ignore the response
-        if (result.err !== DEFER_RESULT) this.setState({ error: result.err });
-        return;
+    const result = await (async () => {
+      try {
+        return { res: await this.func() };
+      } catch (err) {
+        return { err };
       }
+    })();
+
+    if ("err" in result) {
+      // If DEFER_RESULT was thrown, ignore the response
+      if (result.err !== DEFER_RESULT) this.setState({ error: result.err });
+    } else {
       const res = result.res;
 
       // Detach listener after new listener is attached
@@ -182,17 +183,16 @@ export class Cascade<T = any> {
       }
 
       oldHandle?.detach();
-    });
+    }
 
-    // Return true to indicate that refresh request succeeded
-    return true;
+    this.isPending = false;
   }
 
   private listeners = new ListenerManager<[State<T>, string?]>();
   private onChange(cb: (state: State<T>, hash?: string) => void) {
     if (this.isClosed) throw new Error("Cannot add listener to closed Cascade");
 
-    // Reopen automatically when a new listener is added
+    // Re-attach when a new listener is added
     if (!this.isAttached) this.attach();
 
     const retval = this.listeners.addListener(cb);
@@ -233,8 +233,8 @@ export class Cascade<T = any> {
         if ("error" in this.state) throw this.state.error;
         return func(this.state.value);
       },
-      [this],
-      opts
+      opts,
+      this
     );
   }
 
@@ -245,7 +245,7 @@ export class Cascade<T = any> {
       if (!this.state.isValid) throw DEFER_RESULT;
       if ("error" in this.state) return handler(this.state.error);
       return this.state.value;
-    }, [this]);
+    }, this);
   }
 
   // Return a promise that returns the current value or
@@ -364,7 +364,7 @@ export class Cascade<T = any> {
           throw new Error("Unexpected condition");
         return cascade.state.value;
       }) as unknown as readonly [...T];
-    }, resolved);
+    }, ...resolved);
   }
 
   protected toJSON() {

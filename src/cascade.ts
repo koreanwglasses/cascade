@@ -121,7 +121,7 @@ export class Cascade<T = any> {
       "error" in _state ? { error: _state.error } : { value: _state.value };
 
     if ("error" in _state && !this.listeners.size) {
-      console.error("Uncaught error (in Cascade): ", _state.error);
+      console.error("Uncaught error (in Cascade):", _state.error);
     }
 
     const prevHash = this.state.hash;

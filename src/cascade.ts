@@ -1,5 +1,5 @@
 import { DEFER_RESULT } from ".";
-import { Adapter } from "./adapter";
+import { Mutable } from "./mutable";
 import { hash } from "./lib/hash";
 import { ListenerControls, ListenerManager } from "./lib/listener-manager";
 
@@ -380,5 +380,5 @@ export class Cascade<T = any> {
     return { ...this.state, hash: undefined };
   }
 
-  declare static Adapter: typeof Adapter;
+  declare static Adapter: typeof Mutable;
 }

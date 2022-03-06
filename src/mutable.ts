@@ -1,7 +1,7 @@
 import { DEFER_RESULT } from ".";
 import { Cascade, State, Options } from "./cascade";
 
-export class Adapter<T = any> extends Cascade<T> {
+export class Mutable<T = any> extends Cascade<T> {
   private managedState: (State<T> & { isValid: true }) | { isValid: false } = {
     isValid: false,
   };

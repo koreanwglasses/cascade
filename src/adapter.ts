@@ -1,6 +1,5 @@
 import { DEFER_RESULT } from ".";
 import { Cascade, State, Options } from "./cascade";
-import "setimmediate";
 
 export class Adapter<T = any> extends Cascade<T> {
   private managedState: (State<T> & { isValid: true }) | { isValid: false } = {

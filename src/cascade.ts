@@ -14,7 +14,13 @@ export type Options = {
 
 export type State<T> = { value: T } | { error: any };
 
+export const isCascade = (obj: any): obj is Cascade => {
+  return obj && typeof obj === "object" && obj.__isCascade;
+};
+
 export class Cascade<T = any> {
+  private __isCascade = true;
+
   readonly options: Options = {};
   private deps: Cascade[];
 
@@ -29,7 +35,7 @@ export class Cascade<T = any> {
     arg1?: Options | Cascade | undefined | null,
     ...arg2: Cascade[]
   ) {
-    if (arg1 instanceof Cascade) {
+    if (isCascade(arg1)) {
       this.deps = [arg1, ...arg2];
     } else {
       this.deps = arg2;
@@ -164,7 +170,7 @@ export class Cascade<T = any> {
       const oldHandle = this.mirrorSourceHandle;
 
       // Update state
-      if (res instanceof Cascade) {
+      if (isCascade(res)) {
         // If res is a Cascade, mirror its state
         // (Note: the Cascade is mirrored rather than referenced so that
         // this Cascade can independently listen for changes to state)
@@ -173,7 +179,7 @@ export class Cascade<T = any> {
           this.setState(state, hash)
         );
       } else {
-        this.setState({ value: res });
+        this.setState({ value: res as Awaited<T> });
       }
 
       oldHandle?.detach();

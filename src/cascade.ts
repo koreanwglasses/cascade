@@ -62,7 +62,7 @@ export class Cascade<T = any> {
       });
     }
 
-    if (!this.state.isValid && !this.isPending) this.refresh();
+    if (!this.state.isValid && !this.pending) this.refresh();
   }
 
   // Detach all listeners, allowing this Cascade to be GC'ed
@@ -132,19 +132,13 @@ export class Cascade<T = any> {
   // Ensure that multiple refreshes while the
   // function is pending a resolve or reject
   // dont cause multiple evaluations
-  private isPending = false;
+  private pending = 0;
   private mirrorSourceHandle?: ListenerControls;
   async refresh() {
     if (this.isClosed) throw new Error("Cannot refresh closed Cascade");
 
-    // Ignore any requests to refresh while a refresh is pending
-    if (this.isPending) {
-      console.warn(
-        "Call to refresh() ignored while another refresh is pending"
-      );
-      return;
-    }
-    this.isPending = true;
+    // Track how many refreshes are in progress
+    this.pending++;
 
     // Mark state as invalid
     this.state.isValid = false;
@@ -185,7 +179,7 @@ export class Cascade<T = any> {
       oldHandle?.detach();
     }
 
-    this.isPending = false;
+    this.pending--;
   }
 
   private listeners = new ListenerManager<[State<T>, string?]>();
@@ -338,7 +332,7 @@ export class Cascade<T = any> {
   }
 
   static resolve<T>(value: Resolvable<T>) {
-    return new Cascade(() => value);
+    return value instanceof Cascade ? value : new Cascade(() => value);
   }
 
   static all<T extends readonly [...unknown[]]>(values: {

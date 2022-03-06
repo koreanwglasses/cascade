@@ -14,8 +14,13 @@ export type Options = {
 
 export type State<T> = { value: T } | { error: any };
 
+// Handles cases where Cascades have been imported
+// several times, and instanceof wont work
 export const isCascade = (obj: any): obj is Cascade => {
-  return obj && typeof obj === "object" && obj.__isCascade;
+  return (
+    obj instanceof Cascade ||
+    (obj && typeof obj === "object" && obj.__isCascade)
+  );
 };
 
 export class Cascade<T = any> {
@@ -341,8 +346,8 @@ export class Cascade<T = any> {
     return flatten(this) as Cascade<Deep<T>>;
   }
 
-  static resolve<T>(value: Resolvable<T>) {
-    return value instanceof Cascade ? value : new Cascade(() => value);
+  static resolve<T>(value: Resolvable<T>): Cascade<T> {
+    return isCascade(value) ? value : new Cascade(() => value);
   }
 
   static all<T extends readonly [...unknown[]]>(values: {

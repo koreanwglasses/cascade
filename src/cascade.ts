@@ -105,9 +105,12 @@ export class Cascade<T = any> {
 
     this.detach();
 
-    this.setState({
-      error: new Error("Cascade closed"),
-    });
+    if (this.listeners.size) {
+      // If there are still listeners, notify them that the cascade closed
+      this.setState({
+        error: new Error("Cascade closed"),
+      });
+    }
 
     this.isClosed = true;
   }
